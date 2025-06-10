@@ -9,13 +9,13 @@ import (
 
 type Sidecar struct {
 	config       *config.Config
-	logTracker   *logtracker.LogTracker
+	logTracker   logtracker.LogTracker
 	api          *SidecarApi
 	shutdownChan chan struct{}
 }
 
 func NewSidecar(config *config.Config, shutdownChan chan struct{}) *Sidecar {
-	logTracker := logtracker.NewLogTracker(config.ContainerID)
+	logTracker := logtracker.NewLogTracker(config)
 	api := NewSidecarApi(logTracker)
 	return &Sidecar{
 		config:       config,

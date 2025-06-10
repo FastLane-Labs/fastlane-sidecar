@@ -14,10 +14,10 @@ import (
 
 type SidecarApi struct {
 	apiFunctionRegister map[string]reflect.Value
-	logTracker          *logtracker.LogTracker
+	logTracker          logtracker.LogTracker
 }
 
-func NewSidecarApi(logTracker *logtracker.LogTracker) *SidecarApi {
+func NewSidecarApi(logTracker logtracker.LogTracker) *SidecarApi {
 	api := &SidecarApi{
 		apiFunctionRegister: make(map[string]reflect.Value),
 		logTracker:          logTracker,
