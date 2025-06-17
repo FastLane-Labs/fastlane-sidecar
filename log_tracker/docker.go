@@ -47,7 +47,7 @@ func (lt *DockerLogTracker) runWithBackoff() {
 		default:
 			err := lt.streamLogs()
 			if err != nil {
-				log.Error("logTracker", "log stream error", "error", err, "backoff", backoff)
+				log.Error("logTracker", "error", err, "backoff", backoff)
 				time.Sleep(backoff)
 				if backoff < 30*time.Second {
 					backoff *= 2
