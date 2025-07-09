@@ -1,0 +1,42 @@
+name: Build and Publish DEB Package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y dpkg-dev libsystemd-dev
+
+    - name: Read version
+      id: version
+      run: |
+        VERSION=$(cat VERSION)
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Build DEB package
+      run: |
+        ./scripts/build-deb.sh ${{ steps.version.outputs.VERSION }}
+
+    - name: Upload DEB package as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: fastlane-sidecar-deb
+        path: build/*.deb

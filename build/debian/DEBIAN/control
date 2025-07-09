@@ -1,0 +1,10 @@
+Package: fastlane-sidecar
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: systemd
+Maintainer: Fastlane Labs <info@fastlane-labs.com>
+Description: Fastlane Sidecar - MEV capturing sidecar for Monad Validator
+ A sidecar implementation to be run alongside a Monad Validator
+ boosting its ability to capture MEV (Maximal Extractable Value).

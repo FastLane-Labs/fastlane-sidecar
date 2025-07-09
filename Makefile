@@ -1,7 +1,8 @@
 IMAGE_NAME=ghcr.io/fastlane-labs/fastlane-sidecar
 CONTAINER_NAME=sidecar-runner
+VERSION=$(shell cat VERSION)
 
-.PHONY: run shell
+.PHONY: run shell build-deb
 
 run:
 ifndef CONTAINER_ID
@@ -21,3 +22,6 @@ shell:
 		--name $(CONTAINER_NAME) \
 		$(IMAGE_NAME) \
 		bash
+
+build-deb:
+	./scripts/build-deb.sh $(VERSION)
