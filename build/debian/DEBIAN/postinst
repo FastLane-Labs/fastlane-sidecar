@@ -1,0 +1,19 @@
+#!/bin/bash
+
+set -e
+
+# Create fastlane user and group
+if ! getent group fastlane > /dev/null 2>&1; then
+    groupadd --system fastlane
+fi
+
+if ! getent passwd fastlane > /dev/null 2>&1; then
+    useradd --system --gid fastlane --no-create-home --shell /bin/false fastlane
+fi
+
+# Install and enable systemd service
+systemctl daemon-reload
+systemctl enable fastlane-sidecar.service
+
+echo "Fastlane Sidecar installed successfully!"
+echo "Configure via systemd override if needed, then start with: systemctl start fastlane-sidecar"
