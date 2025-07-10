@@ -33,10 +33,92 @@ jobs:
 
     - name: Build DEB package
       run: |
-        ./scripts/build-deb.sh ${{ steps.version.outputs.VERSION }}
+        ./debian/build-deb.sh ${{ steps.version.outputs.VERSION }}
 
     - name: Upload DEB package as artifact
       uses: actions/upload-artifact@v4
       with:
         name: fastlane-sidecar-deb
         path: build/*.deb
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-central-1
+
+    - name: Install APT repository tools
+      run: |
+        sudo apt-get install -y dpkg-dev gpg
+
+    - name: Create APT repository structure
+      run: |
+        # Create repository directory
+        mkdir -p apt-repo/pool/main
+        mkdir -p apt-repo/dists/stable/main/binary-amd64
+
+        cp build/*.deb apt-repo/pool/main/
+        aws s3 cp build/*.deb s3://fastlane-apt-repo/pool/main/
+
+    - name: Generate repository metadata
+      run: |
+        cd apt-repo
+
+        # Download existing Packages file (small file, not the actual packages)
+        aws s3 cp s3://fastlane-apt-repo/dists/stable/main/binary-amd64/Packages existing_packages.txt || touch existing_packages.txt
+
+        # Generate metadata for new package only
+        dpkg-scanpackages pool/main /dev/null > new_packages.txt
+
+        # Combine existing and new package metadata (remove duplicates)
+        cat existing_packages.txt new_packages.txt | sort | uniq > dists/stable/main/binary-amd64/Packages
+
+        # Compress the Packages file
+        gzip -c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+
+        # Create Release file
+        cat > dists/stable/Release << EOF
+        Origin: Fastlane Labs
+        Label: FastLane APT Repository
+        Suite: stable
+        Codename: stable
+        Date: $(date -Ru)
+        Architectures: amd64
+        Components: main
+        Description: FastLane APT Repository
+        EOF
+
+        # Add checksums to Release file
+        echo "MD5Sum:" >> dists/stable/Release
+        find dists/stable -name "Packages*" -type f -exec md5sum {} \; | sed 's/dists\/stable\///g' | awk '{print " " $1 " " $2}' >> dists/stable/Release
+
+        echo "SHA1:" >> dists/stable/Release
+        find dists/stable -name "Packages*" -type f -exec sha1sum {} \; | sed 's/dists\/stable\///g' | awk '{print " " $1 " " $2}' >> dists/stable/Release
+
+        echo "SHA256:" >> dists/stable/Release
+        find dists/stable -name "Packages*" -type f -exec sha256sum {} \; | sed 's/dists\/stable\///g' | awk '{print " " $1 " " $2}' >> dists/stable/Release
+
+        # Create repository list file
+        cat > fastlane-sidecar.list << EOF
+        # FastLane APT Repository
+        deb https://pkg.fastlane.xyz/ stable main
+        EOF
+
+    - name: Sync to S3 bucket
+      run: |
+        cd apt-repo
+
+        # Sync only metadata files to S3 (packages already uploaded)
+        aws s3 sync dists/ s3://fastlane-apt-repo/dists/
+        aws s3 cp fastlane-sidecar.list s3://fastlane-apt-repo/fastlane-sidecar.list
+
+        # Set proper content types
+        aws s3 cp fastlane-sidecar.list s3://fastlane-apt-repo/fastlane-sidecar.list --content-type "text/plain"
+        aws s3 cp dists/stable/Release s3://fastlane-apt-repo/dists/stable/Release --content-type "text/plain"
+        aws s3 cp dists/stable/main/binary-amd64/Packages s3://fastlane-apt-repo/dists/stable/main/binary-amd64/Packages --content-type "text/plain"
+
+    - name: Verify repository upload
+      run: |
+        echo "Repository files uploaded to S3:"
+        aws s3 ls s3://fastlane-apt-repo/ --recursive
