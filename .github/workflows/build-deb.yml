@@ -100,7 +100,7 @@ jobs:
         find dists/stable -name "Packages*" -type f -exec sha256sum {} \; | sed 's/dists\/stable\///g' | awk '{print " " $1 " " $2}' >> dists/stable/Release
 
         # Create repository list file
-        cat > fastlane-sidecar.list << EOF
+        cat > fastlane-labs.list << EOF
         # FastLane APT Repository
         deb https://pkg.fastlane.xyz/ stable main
         EOF
@@ -111,10 +111,10 @@ jobs:
 
         # Sync only metadata files to S3 (packages already uploaded)
         aws s3 sync dists/ s3://fastlane-apt-repo/dists/
-        aws s3 cp fastlane-sidecar.list s3://fastlane-apt-repo/fastlane-sidecar.list
+        aws s3 cp fastlane-labs.list s3://fastlane-apt-repo/fastlane-labs.list
 
         # Set proper content types
-        aws s3 cp fastlane-sidecar.list s3://fastlane-apt-repo/fastlane-sidecar.list --content-type "text/plain"
+        aws s3 cp fastlane-labs.list s3://fastlane-apt-repo/fastlane-labs.list --content-type "text/plain"
         aws s3 cp dists/stable/Release s3://fastlane-apt-repo/dists/stable/Release --content-type "text/plain"
         aws s3 cp dists/stable/main/binary-amd64/Packages s3://fastlane-apt-repo/dists/stable/main/binary-amd64/Packages --content-type "text/plain"
 
