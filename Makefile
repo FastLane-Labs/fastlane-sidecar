@@ -24,4 +24,4 @@ shell:
 		bash
 
 build-deb:
-	./scripts/build-deb.sh $(VERSION)
+	./debian/build-deb.sh $(VERSION)
