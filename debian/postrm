@@ -4,10 +4,18 @@ set -e
 
 case "$1" in
     remove|purge)
-        # Stop and disable service
-        systemctl stop fastlane-sidecar.service || true
-        systemctl disable fastlane-sidecar.service || true
-        systemctl daemon-reload
+        # Stop service if it's running
+        if systemctl is-active --quiet fastlane-sidecar.service; then
+            systemctl stop fastlane-sidecar.service || true
+        fi
+
+        # Disable service if it's enabled
+        if systemctl is-enabled --quiet fastlane-sidecar.service; then
+            systemctl disable fastlane-sidecar.service || true
+        fi
+
+        # Reload daemon after service operations
+        systemctl daemon-reload || true
 
         # Remove user and group
         if getent passwd fastlane > /dev/null 2>&1; then
