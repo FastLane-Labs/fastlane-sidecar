@@ -122,7 +122,10 @@ jobs:
         mkdir -p keys
         gpg --armor --export "${{ secrets.PGP_KEY_ID }}" > keys/public-key.asc
 
-        # Sign the Release file
+        # Create InRelease file (modern APT format)
+        gpg --batch --yes --clearsign --armor --output dists/noble/InRelease dists/noble/Release
+
+        # Also create Release.gpg for compatibility
         gpg --batch --yes --detach-sign --armor --output dists/noble/Release.gpg dists/noble/Release
 
         # Create repository list file with signing info
@@ -143,6 +146,7 @@ jobs:
         # Set proper content types
         aws s3 cp fastlane-labs.list s3://${{ steps.repo.outputs.BUCKET }}/fastlane-labs.list --content-type "text/plain"
         aws s3 cp dists/noble/Release s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/Release --content-type "text/plain"
+        aws s3 cp dists/noble/InRelease s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/InRelease --content-type "text/plain"
         aws s3 cp dists/noble/Release.gpg s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/Release.gpg --content-type "application/pgp-signature"
         aws s3 cp dists/noble/main/binary-amd64/Packages s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/main/binary-amd64/Packages --content-type "text/plain"
         aws s3 cp keys/public-key.asc s3://${{ steps.repo.outputs.BUCKET }}/keys/public-key.asc --content-type "text/plain"
