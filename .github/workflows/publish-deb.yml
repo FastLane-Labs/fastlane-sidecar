@@ -111,27 +111,43 @@ jobs:
         echo "SHA256:" >> dists/noble/Release
         find dists/noble -name "Packages*" -type f -exec sha256sum {} \; | sed 's/dists\/noble\///g' | awk '{print " " $1 " " $2}' >> dists/noble/Release
 
-        # Create repository list file
+    - name: Setup PGP signing
+      run: |
+        cd apt-repo
+
+        # Import private key from secrets
+        echo "${{ secrets.PGP_PRIVATE_KEY }}" | gpg --batch --import
+
+        # Export public key
+        mkdir -p keys
+        gpg --armor --export "${{ secrets.PGP_KEY_ID }}" > keys/public-key.asc
+
+        # Sign the Release file
+        gpg --batch --yes --detach-sign --armor --output dists/noble/Release.gpg dists/noble/Release
+
+        # Create repository list file with signing info
         cat > fastlane-labs.list << EOF
         # FastLane APT Repository
-        deb https://${{ steps.repo.outputs.DOMAIN }}/ noble main
+        deb [signed-by=/etc/apt/keyrings/fastlane-labs.gpg] https://${{ steps.repo.outputs.DOMAIN }}/ noble main
         EOF
 
     - name: Sync to S3 bucket
       run: |
         cd apt-repo
 
-        # Sync only metadata files to S3 (packages already uploaded)
+        # Sync metadata files and keys to S3 (packages already uploaded)
         aws s3 sync dists/ s3://${{ steps.repo.outputs.BUCKET }}/dists/
+        aws s3 sync keys/ s3://${{ steps.repo.outputs.BUCKET }}/keys/
         aws s3 cp fastlane-labs.list s3://${{ steps.repo.outputs.BUCKET }}/fastlane-labs.list
 
         # Set proper content types
         aws s3 cp fastlane-labs.list s3://${{ steps.repo.outputs.BUCKET }}/fastlane-labs.list --content-type "text/plain"
         aws s3 cp dists/noble/Release s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/Release --content-type "text/plain"
+        aws s3 cp dists/noble/Release.gpg s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/Release.gpg --content-type "application/pgp-signature"
         aws s3 cp dists/noble/main/binary-amd64/Packages s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/main/binary-amd64/Packages --content-type "text/plain"
+        aws s3 cp keys/public-key.asc s3://${{ steps.repo.outputs.BUCKET }}/keys/public-key.asc --content-type "text/plain"
 
     - name: Verify repository upload
       run: |
         echo "Repository files uploaded to S3:"
         aws s3 ls s3://${{ steps.repo.outputs.BUCKET }}/ --recursive
-
