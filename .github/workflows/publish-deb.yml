@@ -115,6 +115,13 @@ jobs:
       run: |
         cd apt-repo
 
+        # Configure GPG for strong crypto
+        echo "digest-algo SHA256" >> ~/.gnupg/gpg.conf
+        echo "cert-digest-algo SHA256" >> ~/.gnupg/gpg.conf
+        echo "compress-algo 2" >> ~/.gnupg/gpg.conf
+        echo "s2k-digest-algo SHA256" >> ~/.gnupg/gpg.conf
+        echo "s2k-cipher-algo AES256" >> ~/.gnupg/gpg.conf
+
         # Import private key from secrets
         echo "${{ secrets.PGP_PRIVATE_KEY }}" | gpg --batch --import
 
@@ -122,11 +129,11 @@ jobs:
         mkdir -p keys
         gpg --armor --export "${{ secrets.PGP_KEY_ID }}" > keys/public-key.asc
 
-        # Create InRelease file (modern APT format)
-        gpg --batch --yes --clearsign --armor --output dists/noble/InRelease dists/noble/Release
+                # Create InRelease file (modern APT format) with strong crypto
+        gpg --batch --yes --clearsign --armor --digest-algo SHA256 --output dists/noble/InRelease dists/noble/Release
 
-        # Also create Release.gpg for compatibility
-        gpg --batch --yes --detach-sign --armor --output dists/noble/Release.gpg dists/noble/Release
+        # Also create Release.gpg for compatibility with strong crypto
+        gpg --batch --yes --detach-sign --armor --digest-algo SHA256 --output dists/noble/Release.gpg dists/noble/Release
 
         # Create repository list file with signing info
         cat > fastlane-labs.list << EOF
