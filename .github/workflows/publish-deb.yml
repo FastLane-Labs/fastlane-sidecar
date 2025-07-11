@@ -3,6 +3,7 @@ name: Build and Publish DEB Package
 on:
   push:
     branches: [ main ]
+    tags: [ '*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -30,6 +31,17 @@ jobs:
       run: |
         VERSION=$(cat VERSION)
         echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Determine repository
+      id: repo
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          echo "BUCKET=fastlane-apt-repo" >> $GITHUB_OUTPUT
+          echo "DOMAIN=pkg.fastlane.xyz" >> $GITHUB_OUTPUT
+        else
+          echo "BUCKET=fastlane-apt-repo-stage" >> $GITHUB_OUTPUT
+          echo "DOMAIN=pkg-stage.fastlane.xyz" >> $GITHUB_OUTPUT
+        fi
 
     - name: Build DEB package
       run: |
@@ -59,14 +71,14 @@ jobs:
         mkdir -p apt-repo/dists/noble/main/binary-amd64
 
         cp build/*.deb apt-repo/pool/main/
-        aws s3 cp build/*.deb s3://fastlane-apt-repo/pool/main/
+        aws s3 cp build/*.deb s3://${{ steps.repo.outputs.BUCKET }}/pool/main/
 
     - name: Generate repository metadata
       run: |
         cd apt-repo
 
         # Download existing Packages file (small file, not the actual packages)
-        aws s3 cp s3://fastlane-apt-repo/dists/noble/main/binary-amd64/Packages existing_packages.txt || touch existing_packages.txt
+        aws s3 cp s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/main/binary-amd64/Packages existing_packages.txt || touch existing_packages.txt
 
         # Generate metadata for new package only
         dpkg-scanpackages pool/main /dev/null > new_packages.txt
@@ -102,7 +114,7 @@ jobs:
         # Create repository list file
         cat > fastlane-labs.list << EOF
         # FastLane APT Repository
-        deb https://pkg.fastlane.xyz/ noble main
+        deb https://${{ steps.repo.outputs.DOMAIN }}/ noble main
         EOF
 
     - name: Sync to S3 bucket
@@ -110,16 +122,16 @@ jobs:
         cd apt-repo
 
         # Sync only metadata files to S3 (packages already uploaded)
-        aws s3 sync dists/ s3://fastlane-apt-repo/dists/
-        aws s3 cp fastlane-labs.list s3://fastlane-apt-repo/fastlane-labs.list
+        aws s3 sync dists/ s3://${{ steps.repo.outputs.BUCKET }}/dists/
+        aws s3 cp fastlane-labs.list s3://${{ steps.repo.outputs.BUCKET }}/fastlane-labs.list
 
         # Set proper content types
-        aws s3 cp fastlane-labs.list s3://fastlane-apt-repo/fastlane-labs.list --content-type "text/plain"
-        aws s3 cp dists/noble/Release s3://fastlane-apt-repo/dists/noble/Release --content-type "text/plain"
-        aws s3 cp dists/noble/main/binary-amd64/Packages s3://fastlane-apt-repo/dists/noble/main/binary-amd64/Packages --content-type "text/plain"
+        aws s3 cp fastlane-labs.list s3://${{ steps.repo.outputs.BUCKET }}/fastlane-labs.list --content-type "text/plain"
+        aws s3 cp dists/noble/Release s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/Release --content-type "text/plain"
+        aws s3 cp dists/noble/main/binary-amd64/Packages s3://${{ steps.repo.outputs.BUCKET }}/dists/noble/main/binary-amd64/Packages --content-type "text/plain"
 
     - name: Verify repository upload
       run: |
         echo "Repository files uploaded to S3:"
-        aws s3 ls s3://fastlane-apt-repo/ --recursive
+        aws s3 ls s3://${{ steps.repo.outputs.BUCKET }}/ --recursive
 
