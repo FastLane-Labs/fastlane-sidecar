@@ -120,7 +120,7 @@ jobs:
         # Create InRelease file using clearsign
         gpg --batch --yes \
             --default-key "${{ secrets.PGP_KEY_ID }}" \
-            --digest-algo SHA256 \
+            --digest-algo SHA512 \
             --clearsign \
             --output dists/noble/InRelease \
             dists/noble/Release
