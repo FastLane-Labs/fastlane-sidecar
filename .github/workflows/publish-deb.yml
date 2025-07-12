@@ -89,8 +89,22 @@ jobs:
         # Compress the Packages file
         gzip -c dists/noble/main/binary-amd64/Packages > dists/noble/main/binary-amd64/Packages.gz
 
-        # Create Release file using apt-ftparchive
-        apt-ftparchive release dists/noble > dists/noble/Release
+        # Create apt-ftparchive configuration
+        cat > apt-ftparchive.conf << EOF
+        APT::FTPArchive::Release {
+          Origin        "Fastlane Labs";
+          Label         "FastLane APT Repository";
+          Suite         "noble";
+          Codename      "noble";
+          Date          "$(date -Ru)";
+          Architectures "amd64";
+          Components    "main";
+          Description   "FastLane APT Repository";
+        };
+        EOF
+
+        # Create Release file using apt-ftparchive with configuration
+        apt-ftparchive -c=apt-ftparchive.conf release dists/noble > dists/noble/Release
 
     - name: Setup PGP signing
       run: |
@@ -105,7 +119,7 @@ jobs:
 
         # Create InRelease file using clearsign
         gpg --batch --yes \
-            --default-key ${{ secrets.PGP_KEY_ID }} \
+            --default-key "${{ secrets.PGP_KEY_ID }}" \
             --digest-algo SHA256 \
             --clearsign \
             --output dists/noble/InRelease \
