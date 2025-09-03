@@ -29,10 +29,6 @@ FROM alpine:latest
 # Install only runtime dependencies
 RUN apk --no-cache add ca-certificates
 
-# Create non-root user for security
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
-
 WORKDIR /app
 
 # Copy binary from builder stage
@@ -40,8 +36,5 @@ COPY --from=builder /app/fastlane-sidecar .
 
 # Ensure binary is executable
 RUN chmod +x fastlane-sidecar
-
-# Switch to non-root user
-USER appuser
 
 ENTRYPOINT ["./fastlane-sidecar"]
