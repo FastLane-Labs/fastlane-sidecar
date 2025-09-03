@@ -102,9 +102,28 @@ func (s *Sidecar) handleIPCConnection() error {
 				continue // Skip empty frames
 			}
 
-			// Sanity check
+			// Skip frames that are too large (likely the initial snapshot)
 			if frameLength > 10*1024*1024 { // 10MB limit
-				return fmt.Errorf("frame too large: %d bytes", frameLength)
+				log.Info("Skipping large frame", "size", frameLength)
+
+				// Read and discard the frame data in chunks
+				const chunkSize = 1024 * 1024 // 1MB chunks
+				remaining := int64(frameLength)
+				discardBuf := make([]byte, chunkSize)
+
+				for remaining > 0 {
+					toRead := int64(chunkSize)
+					if remaining < toRead {
+						toRead = remaining
+					}
+					n, err := conn.Read(discardBuf[:toRead])
+					if err != nil {
+						return fmt.Errorf("reading large frame data: %w", err)
+					}
+					remaining -= int64(n)
+				}
+
+				continue // Skip to next frame
 			}
 
 			// Read frame data
