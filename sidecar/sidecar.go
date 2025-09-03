@@ -1,9 +1,10 @@
 package sidecar
 
 import (
-	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"sync/atomic"
 	"time"
@@ -81,10 +82,7 @@ func (s *Sidecar) handleIPCConnection() error {
 
 	log.Info("IPC connected", "endpoint", s.config.IPCPath)
 
-	// Use buffered reader for newline-delimited protocol
-	reader := bufio.NewReader(conn)
-
-	// Read loop
+	// Read loop with binary protocol
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -93,29 +91,42 @@ func (s *Sidecar) handleIPCConnection() error {
 			// Set read deadline to check context periodically
 			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
-			// Read raw transaction bytes (expecting newline delimiter)
-			txBytes, err := reader.ReadBytes('\n')
+			// Read 4-byte length header (big-endian)
+			lengthBuf := make([]byte, 4)
+			_, err := io.ReadFull(conn, lengthBuf)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					continue // Timeout is expected, continue checking context
 				}
-				return fmt.Errorf("reading from IPC: %w", err)
+				if err == io.EOF {
+					return fmt.Errorf("connection closed")
+				}
+				return fmt.Errorf("reading length header: %w", err)
 			}
 
-			// Remove the newline delimiter
-			if len(txBytes) > 0 && txBytes[len(txBytes)-1] == '\n' {
-				txBytes = txBytes[:len(txBytes)-1]
-			}
-
-			// Skip if this looks like a text message (starts with ASCII characters)
-			// ACK messages start with "ACK:", keccak responses start with "keccak256:"
-			if len(txBytes) > 0 && (txBytes[0] >= 'A' && txBytes[0] <= 'z') {
-				log.Debug("Received text message", "message", string(txBytes))
+			// Parse message length
+			messageLen := binary.BigEndian.Uint32(lengthBuf)
+			
+			// Sanity check - skip messages larger than 10MB
+			if messageLen > 10*1024*1024 {
+				log.Error("Message too large, skipping", "size", messageLen)
+				// Discard the message by reading and discarding the bytes
+				_, err = io.CopyN(io.Discard, conn, int64(messageLen))
+				if err != nil {
+					return fmt.Errorf("discarding oversized message: %w", err)
+				}
 				continue
 			}
 
+			// Read the RLP-encoded transaction data
+			txBytes := make([]byte, messageLen)
+			_, err = io.ReadFull(conn, txBytes)
+			if err != nil {
+				return fmt.Errorf("reading transaction data: %w", err)
+			}
+
 			// Update statistics
-			s.bytesTotal.Add(uint64(len(txBytes)) + 1) // +1 for the newline
+			s.bytesTotal.Add(uint64(4 + messageLen)) // 4 bytes for length + message
 
 			// Process transaction
 			s.handleTransaction(txBytes)
