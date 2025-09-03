@@ -1,10 +1,9 @@
 package sidecar
 
 import (
+	"bufio"
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"sync/atomic"
 	"time"
@@ -82,61 +81,44 @@ func (s *Sidecar) handleIPCConnection() error {
 
 	log.Info("IPC connected", "endpoint", s.config.IPCPath)
 
+	// Use buffered reader for newline-delimited protocol
+	reader := bufio.NewReader(conn)
+
 	// Read loop
 	for {
 		select {
 		case <-s.ctx.Done():
 			return nil
 		default:
-			// Read frame length (4 bytes, big endian)
-			lengthBytes := make([]byte, 4)
-			if _, err := io.ReadFull(conn, lengthBytes); err != nil {
-				if err == io.EOF {
-					return fmt.Errorf("connection closed")
+			// Set read deadline to check context periodically
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+			// Read raw transaction bytes (expecting newline delimiter)
+			txBytes, err := reader.ReadBytes('\n')
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue // Timeout is expected, continue checking context
 				}
-				return fmt.Errorf("reading frame length: %w", err)
+				return fmt.Errorf("reading from IPC: %w", err)
 			}
 
-			frameLength := binary.BigEndian.Uint32(lengthBytes)
-			if frameLength == 0 {
-				continue // Skip empty frames
+			// Remove the newline delimiter
+			if len(txBytes) > 0 && txBytes[len(txBytes)-1] == '\n' {
+				txBytes = txBytes[:len(txBytes)-1]
 			}
 
-			// Skip frames that are too large (likely the initial snapshot)
-			if frameLength > 10*1024*1024 { // 10MB limit
-				log.Info("Skipping large frame", "size", frameLength)
-
-				// Read and discard the frame data in chunks
-				const chunkSize = 1024 * 1024 // 1MB chunks
-				remaining := int64(frameLength)
-				discardBuf := make([]byte, chunkSize)
-
-				for remaining > 0 {
-					toRead := int64(chunkSize)
-					if remaining < toRead {
-						toRead = remaining
-					}
-					n, err := conn.Read(discardBuf[:toRead])
-					if err != nil {
-						return fmt.Errorf("reading large frame data: %w", err)
-					}
-					remaining -= int64(n)
-				}
-
-				continue // Skip to next frame
-			}
-
-			// Read frame data
-			data := make([]byte, frameLength)
-			if _, err := io.ReadFull(conn, data); err != nil {
-				return fmt.Errorf("reading frame data: %w", err)
+			// Skip if this looks like a text message (starts with ASCII characters)
+			// ACK messages start with "ACK:", keccak responses start with "keccak256:"
+			if len(txBytes) > 0 && (txBytes[0] >= 'A' && txBytes[0] <= 'z') {
+				log.Debug("Received text message", "message", string(txBytes))
+				continue
 			}
 
 			// Update statistics
-			s.bytesTotal.Add(uint64(frameLength) + 4)
+			s.bytesTotal.Add(uint64(len(txBytes)) + 1) // +1 for the newline
 
 			// Process transaction
-			s.handleTransaction(data)
+			s.handleTransaction(txBytes)
 		}
 	}
 }
