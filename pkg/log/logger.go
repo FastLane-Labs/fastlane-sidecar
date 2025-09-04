@@ -21,18 +21,18 @@ func InitLogger(logLevel string) {
 	}
 }
 
-func Debug(format string, v ...interface{}) {
+func Debug(format string, v ...any) {
 	log.Debug(format, v...)
 }
 
-func Info(format string, v ...interface{}) {
+func Info(format string, v ...any) {
 	log.Info(format, v...)
 }
 
-func Warn(format string, v ...interface{}) {
+func Warn(format string, v ...any) {
 	log.Warn(format, v...)
 }
 
-func Error(format string, v ...interface{}) {
+func Error(format string, v ...any) {
 	log.Error(format, v...)
 }
