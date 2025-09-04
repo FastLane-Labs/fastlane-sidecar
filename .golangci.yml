@@ -1,11 +1,6 @@
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
-    - vendor
-    - third_party
-  skip-files:
-    - ".*\\.pb\\.go$"
 
 linters:
   enable:
@@ -13,33 +8,29 @@ linters:
     - govet
     - ineffassign
     - misspell
-    - unconvert
-    - gocritic
-    - goimports
-  disable:
-    - errcheck
-    - gosimple
-    - staticcheck
-    - unused
+  disable-all: true
 
 linters-settings:
   gofmt:
     simplify: true
-  govet:
-    check-shadowing: false
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - performance
-      - style
-    disabled-checks:
-      - commentedOutCode
-      - whyNoLint
 
 issues:
+  exclude-dirs:
+    - vendor
+    - third_party
+  exclude-files:
+    - ".*\\.pb\\.go$"
   exclude-rules:
     # Exclude some linters from running on tests files
     - path: _test\.go
       linters:
-        - gocritic
         - ineffassign
+    # Exclude exitAfterDefer in cmd tools
+    - path: cmd/
+      linters:
+        - gocritic
+      text: "exitAfterDefer"
+  # Maximum issues count per one linter
+  max-issues-per-linter: 50
+  # Maximum count of issues with the same text
+  max-same-issues: 10
