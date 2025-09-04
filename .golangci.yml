@@ -1,0 +1,45 @@
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - third_party
+  skip-files:
+    - ".*\\.pb\\.go$"
+
+linters:
+  enable:
+    - gofmt
+    - govet
+    - ineffassign
+    - misspell
+    - unconvert
+    - gocritic
+    - goimports
+  disable:
+    - errcheck
+    - gosimple
+    - staticcheck
+    - unused
+
+linters-settings:
+  gofmt:
+    simplify: true
+  govet:
+    check-shadowing: false
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    disabled-checks:
+      - commentedOutCode
+      - whyNoLint
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocritic
+        - ineffassign
