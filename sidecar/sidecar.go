@@ -106,7 +106,7 @@ func (s *Sidecar) handleIPCConnection() error {
 
 			// Parse message length
 			messageLen := binary.BigEndian.Uint32(lengthBuf)
-			
+
 			// Sanity check - skip messages larger than 10MB
 			if messageLen > 10*1024*1024 {
 				log.Error("Message too large, skipping", "size", messageLen)
