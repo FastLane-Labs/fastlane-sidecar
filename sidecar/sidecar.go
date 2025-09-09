@@ -3,23 +3,19 @@ package sidecar
 import (
 	jsonApiRpc "github.com/FastLane-Labs/fastlane-json-rpc/rpc"
 	"github.com/FastLane-Labs/fastlane-sidecar/config"
-	logtracker "github.com/FastLane-Labs/fastlane-sidecar/log_tracker"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 type Sidecar struct {
 	config       *config.Config
-	logTracker   logtracker.LogTracker
 	api          *SidecarApi
 	shutdownChan chan struct{}
 }
 
 func NewSidecar(config *config.Config, shutdownChan chan struct{}) *Sidecar {
-	logTracker := logtracker.NewLogTracker(config)
-	api := NewSidecarApi(logTracker)
+	api := NewSidecarApi()
 	return &Sidecar{
 		config:       config,
-		logTracker:   logTracker,
 		api:          api,
 		shutdownChan: shutdownChan,
 	}
@@ -30,10 +26,6 @@ func (s *Sidecar) Start() error {
 	if err != nil {
 		return err
 	}
-
-	go func() {
-		s.logTracker.Start()
-	}()
 
 	return nil
 }
