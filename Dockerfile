@@ -13,15 +13,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # Copy only necessary source code
 COPY cmd/ ./cmd/
-COPY config/ ./config/
-COPY log/ ./log/
-COPY sidecar/ ./sidecar/
-COPY main.go ./
+COPY internal/ ./internal/
+COPY pkg/ ./pkg/
 
 # Build with cache mounts for faster rebuilds
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o fastlane-sidecar .
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o fastlane-sidecar ./cmd/sidecar
 
 # Final stage - minimal runtime image
 FROM alpine:latest

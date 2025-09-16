@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/FastLane-Labs/fastlane-sidecar/config"
-	"github.com/FastLane-Labs/fastlane-sidecar/log"
-	"github.com/FastLane-Labs/fastlane-sidecar/sidecar"
+	"github.com/FastLane-Labs/fastlane-sidecar/internal/orchestrator"
+	"github.com/FastLane-Labs/fastlane-sidecar/pkg/config"
+	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
 )
 
 func main() {
@@ -12,7 +12,7 @@ func main() {
 	log.Info("config", "config", config)
 
 	shutdownChan := make(chan struct{})
-	sidecar := sidecar.NewSidecar(config, shutdownChan)
+	sidecar := orchestrator.NewSidecar(config, shutdownChan)
 	sidecar.Start()
 
 	log.Info("Sidecar started ...")
