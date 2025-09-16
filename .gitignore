@@ -1,0 +1,76 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Main binary
+fastlane-sidecar
+/fastlane-sidecar-*
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+*.prof
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# Dependency directories (remove the comment below if you use dep)
+# vendor/
+
+# Go module cache
+/go/pkg/mod/
+
+# IDE specific files
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build directories
+/build/
+/dist/
+/tmp/
+/temp/
+
+# Debug files
+debug
+*.log
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Docker
+.dockerignore.local
+
+# Debian package build artifacts
+*.deb
+debian/fastlane-sidecar/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars

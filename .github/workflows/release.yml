@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  docker-hub:
+    name: Build and Push to Docker Hub
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=${VERSION#v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+      
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            fastlanelabs/fastlane-sidecar
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  debian-package:
+    name: Build and Publish Debian Package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev libsystemd-dev
+      
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat VERSION)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Build DEB package
+        run: |
+          ./debian/build-deb.sh ${{ steps.version.outputs.VERSION }}
+      
+      - name: Upload DEB package as release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: fastlane-sidecar-deb-${{ steps.version.outputs.VERSION }}
+          path: build/*.deb
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+      
+      - name: Install APT repository tools
+        run: |
+          sudo apt-get install -y dpkg-dev gpg apt-utils
+      
+      - name: Create APT repository structure
+        run: |
+          # Create repository directory
+          mkdir -p apt-repo/pool/main
+          mkdir -p apt-repo/dists/noble/main/binary-amd64
+          
+          # Copy package to pool
+          cp build/*.deb apt-repo/pool/main/
+          
+          # Upload package to S3
+          aws s3 cp build/*.deb s3://fastlane-apt-repo/pool/main/
+      
+      - name: Generate repository metadata
+        run: |
+          cd apt-repo
+          
+          # Download existing Packages file
+          aws s3 cp s3://fastlane-apt-repo/dists/noble/main/binary-amd64/Packages existing_packages.txt || touch existing_packages.txt
+          
+          # Generate metadata for new package
+          dpkg-scanpackages pool/main /dev/null > new_packages.txt
+          
+          # Combine and deduplicate
+          cat existing_packages.txt new_packages.txt | sort | uniq > dists/noble/main/binary-amd64/Packages
+          
+          # Compress the Packages file
+          gzip -c dists/noble/main/binary-amd64/Packages > dists/noble/main/binary-amd64/Packages.gz
+          
+          # Create apt-ftparchive configuration
+          cat > apt-ftparchive.conf << EOF
+          APT::FTPArchive::Release {
+            Origin        "Fastlane Labs";
+            Label         "FastLane APT Repository";
+            Suite         "noble";
+            Codename      "noble";
+            Date          "$(date -Ru)";
+            Architectures "amd64";
+            Components    "main";
+            Description   "FastLane APT Repository";
+          };
+          EOF
+          
+          # Create Release file
+          apt-ftparchive -c=apt-ftparchive.conf release dists/noble > dists/noble/Release
+      
+      - name: Sign repository
+        run: |
+          cd apt-repo
+          
+          # Import private key
+          echo "${{ secrets.PGP_PRIVATE_KEY }}" | gpg --batch --import
+          
+          # Export public key
+          mkdir -p keys
+          gpg --armor --export "${{ secrets.PGP_KEY_ID }}" > keys/public-key.asc
+          
+          # Create InRelease file
+          gpg --batch --yes \
+              --default-key "${{ secrets.PGP_KEY_ID }}" \
+              --digest-algo SHA512 \
+              --clearsign \
+              --output dists/noble/InRelease \
+              dists/noble/Release
+          
+          # Create repository list file
+          cat > fastlane-labs.list << EOF
+          # FastLane APT Repository
+          deb [signed-by=/etc/apt/keyrings/fastlane-labs.gpg] https://pkg.fastlane.xyz/ noble main
+          EOF
+      
+      - name: Sync to S3 bucket
+        run: |
+          cd apt-repo
+          
+          # Sync metadata files and keys to S3
+          aws s3 sync dists/ s3://fastlane-apt-repo/dists/
+          aws s3 sync keys/ s3://fastlane-apt-repo/keys/
+          aws s3 cp fastlane-labs.list s3://fastlane-apt-repo/fastlane-labs.list
+          
+          # Set proper content types
+          aws s3 cp fastlane-labs.list s3://fastlane-apt-repo/fastlane-labs.list --content-type "text/plain"
+          aws s3 cp dists/noble/Release s3://fastlane-apt-repo/dists/noble/Release --content-type "text/plain"
+          aws s3 cp dists/noble/InRelease s3://fastlane-apt-repo/dists/noble/InRelease --content-type "text/plain"
+          aws s3 cp dists/noble/main/binary-amd64/Packages s3://fastlane-apt-repo/dists/noble/main/binary-amd64/Packages --content-type "text/plain"
+          aws s3 cp keys/public-key.asc s3://fastlane-apt-repo/keys/public-key.asc --content-type "text/plain"
+      
+      - name: Verify repository upload
+        run: |
+          echo "Repository files uploaded to S3:"
+          aws s3 ls s3://fastlane-apt-repo/ --recursive | head -20
