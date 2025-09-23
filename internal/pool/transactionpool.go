@@ -7,8 +7,8 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/rlp"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 // TransactionPool manages transactions with TTL
@@ -109,9 +109,6 @@ func (tp *TransactionPool) GetUnclassifiedTransactions() []*types.PooledTransact
 	}
 	return unclassified
 }
-
-
-
 
 // CleanupOldTransactions removes transactions older than maxDuration
 func (tp *TransactionPool) CleanupOldTransactions() {

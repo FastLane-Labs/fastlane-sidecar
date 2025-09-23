@@ -33,13 +33,13 @@ type TxWithPriority struct {
 
 // PooledTransaction represents a transaction in the pool with metadata
 type PooledTransaction struct {
-	Tx          *types.Transaction
-	TxBytes     []byte
-	ReceivedAt  time.Time
-	Source      string // "node" or "gateway"
-	TxType      TransactionType
-	Hash        common.Hash
-	BidData     *BidData // Bid-specific data if this is a bid transaction
+	Tx         *types.Transaction
+	TxBytes    []byte
+	ReceivedAt time.Time
+	Source     string // "node" or "gateway"
+	TxType     TransactionType
+	Hash       common.Hash
+	BidData    *BidData // Bid-specific data if this is a bid transaction
 }
 
 // TransactionType represents the type of transaction
@@ -53,17 +53,17 @@ const (
 
 // BidData contains bid-specific information
 type BidData struct {
-	BidAmount    *big.Int      // Bid amount extracted from tx data
-	TargetTxHash *common.Hash  // For backrun bids, the target tx hash
+	BidAmount    *big.Int     // Bid amount extracted from tx data
+	TargetTxHash *common.Hash // For backrun bids, the target tx hash
 }
 
 // BackrunAuctionPool represents an auction pool for backrun bids
 type BackrunAuctionPool struct {
-	OpportunityTx       *PooledTransaction
-	BackrunBids         []*PooledTransaction
-	CreatedAt           time.Time
+	OpportunityTx        *PooledTransaction
+	BackrunBids          []*PooledTransaction
+	CreatedAt            time.Time
 	StreamingScheduledAt time.Time
-	Status              AuctionPoolStatus
+	Status               AuctionPoolStatus
 }
 
 // AuctionPoolStatus represents the status of an auction pool
