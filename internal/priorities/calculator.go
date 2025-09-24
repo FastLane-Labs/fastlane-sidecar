@@ -27,8 +27,8 @@ func CalculateOpportunityPriority(gasTip *big.Int) [16]uint64 {
 	// Set bid type to 1 (backrun)
 	priority[0] = 1
 
-	// Set transaction type to 1 (opportunity)
-	priority[1] = 1
+	// Set transaction type to 2 (opportunity)
+	priority[1] = 2
 
 	// Encode gas tip in priority[8..12]
 	encodeGasTip(&priority, gasTip)
@@ -43,8 +43,8 @@ func CalculateBackrunPriority(bidAmount *big.Int, oppGasTip *big.Int) [16]uint64
 	// Set bid type to 1 (backrun)
 	priority[0] = 1
 
-	// Set transaction type to 2 (backrun bid)
-	priority[1] = 2
+	// Set transaction type to 1 (backrun bid)
+	priority[1] = 1
 
 	// Encode opportunity tx gas tip in priority[8..12]
 	encodeGasTip(&priority, oppGasTip)
