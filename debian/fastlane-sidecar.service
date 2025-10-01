@@ -5,16 +5,15 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=fastlane
-Group=fastlane
-ExecStart=/usr/bin/fastlane-sidecar -log-level=info -http-port=8080
+User=monad
+Group=monad
+ExecStart=/usr/bin/fastlane-sidecar -log-level=info
 Restart=always
 
 # Security settings
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
 
 RuntimeDirectory=fastlane-sidecar
 

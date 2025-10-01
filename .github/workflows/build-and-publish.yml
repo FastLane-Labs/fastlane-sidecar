@@ -1,0 +1,276 @@
+name: Build and Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: fastlane-labs/fastlane-sidecar
+
+jobs:
+  build-and-push-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version and Docker tags
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # For tags like v1.0.0, extract 1.0.0
+            TAG_NAME="${{ github.ref_name }}"
+            if [[ "${TAG_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              VERSION="${BASH_REMATCH[1]}"
+              DOCKER_TAG="${VERSION}"
+              echo "📦 Tagged release: ${VERSION}"
+            else
+              echo "❌ Invalid tag format: ${TAG_NAME}. Expected format: v<major>.<minor>.<patch>"
+              exit 1
+            fi
+          else
+            # For manual triggers: use commit SHA
+            SHORT_SHA="$(git rev-parse --short HEAD)"
+            VERSION="0~dev.${SHORT_SHA}"
+            DOCKER_TAG="dev"
+            echo "📦 Development build: ${VERSION}"
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "docker_tag=${DOCKER_TAG}" >> $GITHUB_OUTPUT
+          echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "is_tag=${{ github.ref_type == 'tag' }}" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=semver,pattern={{major}},enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=raw,value=latest,enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=raw,value=dev,enable=${{ steps.version.outputs.is_tag == 'false' }}
+            type=raw,value=sha-${{ steps.version.outputs.short_sha }},enable=${{ steps.version.outputs.is_tag == 'false' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-and-publish-debian:
+    name: Build and Publish Debian Package
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev libsystemd-dev apt-utils gzip gpg
+
+      - name: Determine package version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # For tags like v1.0.0, extract 1.0.0
+            TAG_NAME="${{ github.ref_name }}"
+            if [[ "${TAG_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              PACKAGE_VERSION="${BASH_REMATCH[1]}"
+              echo "📦 Tagged release: ${PACKAGE_VERSION}"
+            else
+              echo "❌ Invalid tag format: ${TAG_NAME}. Expected format: v<major>.<minor>.<patch>"
+              exit 1
+            fi
+          else
+            # For manual triggers: 0~dev.<sha> format (tilde makes it pre-release)
+            SHORT_SHA="$(git rev-parse --short HEAD)"
+            PACKAGE_VERSION="0~dev.${SHORT_SHA}"
+            echo "📦 Development build: ${PACKAGE_VERSION}"
+          fi
+
+          echo "version=${PACKAGE_VERSION}" >> $GITHUB_OUTPUT
+          echo "📦 Package version: fastlane-sidecar_${PACKAGE_VERSION}_amd64.deb"
+
+      - name: Build DEB package
+        run: |
+          ./debian/build-deb.sh ${{ steps.version.outputs.version }}
+
+      - name: Upload DEB package as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fastlane-sidecar-deb-${{ steps.version.outputs.version }}
+          path: build/*.deb
+          retention-days: 30
+
+      - name: Create GitHub release and upload package (on tag)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/*.deb
+          name: "FastLane Sidecar ${{ github.ref_name }}"
+          body: |
+            ## 🚀 FastLane Sidecar ${{ github.ref_name }}
+
+            ### 📦 Installation:
+            ```bash
+            # Download the package
+            wget https://github.com/FastLane-Labs/fastlane-sidecar/releases/download/${{ github.ref_name }}/fastlane-sidecar_${{ steps.version.outputs.version }}_amd64.deb
+
+            # Install the package
+            sudo dpkg -i fastlane-sidecar_${{ steps.version.outputs.version }}_amd64.deb
+
+            # Start and enable the service
+            sudo systemctl enable --now fastlane-sidecar
+
+            # Check status
+            sudo systemctl status fastlane-sidecar
+            ```
+
+            ### 📋 What's included:
+            - Binary: `/usr/bin/fastlane-sidecar`
+            - Systemd service: `fastlane-sidecar.service`
+
+            🤖 Generated with [Claude Code](https://claude.com/claude-code)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
+
+      - name: Upload package and update S3 APT repository
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        env:
+          S3_BUCKET: ${{ vars.S3_APT_BUCKET || 'fastlane-apt-repo' }}
+          PACKAGE_FILE: fastlane-sidecar_${{ steps.version.outputs.version }}_amd64.deb
+        run: |
+          echo "🚀 Publishing package to S3 APT repository..."
+
+          # Create pool directory structure
+          POOL_PATH="pool/main/f/fastlane-sidecar"
+          mkdir -p temp-repo/${POOL_PATH}
+          cp "build/${PACKAGE_FILE}" temp-repo/${POOL_PATH}/
+
+          # Create APT repository directory structure
+          mkdir -p temp-repo/dists/stable/main/binary-amd64
+
+          # Download existing packages to maintain repository integrity
+          echo "📥 Downloading existing packages..."
+          aws s3 sync "s3://${S3_BUCKET}/pool/" temp-repo/pool/ || echo "No existing packages found"
+
+          # Generate Packages file with ALL versions
+          echo "📦 Generating multi-version Packages file..."
+          cd temp-repo
+
+          # Create Packages file manually to include ALL .deb files
+          > dists/stable/main/binary-amd64/Packages
+
+          for deb_file in $(find pool/ -name "*.deb" | sort); do
+            echo "Adding package: ${deb_file}"
+            dpkg-deb --field "${deb_file}" | sed 's/^//' >> dists/stable/main/binary-amd64/Packages
+            echo "Filename: ${deb_file}" >> dists/stable/main/binary-amd64/Packages
+            echo "Size: $(stat -c%s "${deb_file}")" >> dists/stable/main/binary-amd64/Packages
+            echo "MD5sum: $(md5sum "${deb_file}" | cut -d' ' -f1)" >> dists/stable/main/binary-amd64/Packages
+            echo "SHA1: $(sha1sum "${deb_file}" | cut -d' ' -f1)" >> dists/stable/main/binary-amd64/Packages
+            echo "SHA256: $(sha256sum "${deb_file}" | cut -d' ' -f1)" >> dists/stable/main/binary-amd64/Packages
+            echo "" >> dists/stable/main/binary-amd64/Packages
+          done
+          gzip -9c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+
+          # Generate Release file
+          echo "📄 Generating Release file..."
+          cat > dists/stable/Release << EOF
+          Suite: stable
+          Codename: stable
+          Date: $(date -Ru)
+          Architectures: amd64
+          Components: main
+          Description: FastLane APT Repository
+          EOF
+
+          # Add file hashes to Release
+          cd dists/stable
+          apt-ftparchive release . >> Release
+          cd ../..
+
+          # Sign Release file to create InRelease and Release.gpg
+          echo "🔐 Signing repository metadata with GPG..."
+          echo "${{ secrets.APT_SIGNING_KEY }}" | base64 -d | gpg --import --batch --yes
+          gpg --batch --yes --digest-algo SHA256 --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --batch --yes --digest-algo SHA256 -abs -o dists/stable/Release.gpg dists/stable/Release
+
+          # Generate and upload public key for APT verification
+          echo "📤 Generating and uploading GPG public key..."
+          gpg --armor --export apt@fastlane-labs.com > ../fastlane-apt-key.gpg
+          aws s3 cp ../fastlane-apt-key.gpg "s3://${S3_BUCKET}/fastlane-apt-key.gpg" \
+                   --content-type="application/pgp-keys"
+
+          # Upload packages with correct content types
+          echo "📦 Uploading packages..."
+          aws s3 sync pool/ "s3://${S3_BUCKET}/pool/" \
+                   --content-type="application/vnd.debian.binary-package" \
+                   --exclude "*" --include "*.deb"
+
+          # Upload repository metadata files
+          echo "📤 Uploading signed repository metadata..."
+          aws s3 cp dists/stable/main/binary-amd64/Packages "s3://${S3_BUCKET}/dists/stable/main/binary-amd64/Packages" \
+                   --content-type="text/plain"
+          aws s3 cp dists/stable/main/binary-amd64/Packages.gz "s3://${S3_BUCKET}/dists/stable/main/binary-amd64/Packages.gz" \
+                   --content-type="application/gzip"
+          aws s3 cp dists/stable/Release "s3://${S3_BUCKET}/dists/stable/Release" \
+                   --content-type="text/plain"
+          aws s3 cp dists/stable/InRelease "s3://${S3_BUCKET}/dists/stable/InRelease" \
+                   --content-type="text/plain"
+          aws s3 cp dists/stable/Release.gpg "s3://${S3_BUCKET}/dists/stable/Release.gpg" \
+                   --content-type="application/pgp-signature"
+
+          echo "✅ Package published to S3 APT repository!"
+          echo "📋 Repository URL: https://${S3_BUCKET}.s3.amazonaws.com"
