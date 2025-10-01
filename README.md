@@ -66,10 +66,33 @@ sudo apt update
 **Step 2: Install FastLane Sidecar**
 
 ```bash
-# Install the package
+# Install the latest stable version
 sudo apt install fastlane-sidecar
 
+# Or install a specific version (e.g., 1.0.0)
+sudo apt install fastlane-sidecar=1.0.0
+
+# Or install a dev version (e.g., 0~dev.abc1234)
+sudo apt install fastlane-sidecar=0~dev.abc1234
+
 # The service is installed but not started automatically
+```
+
+**Upgrading to a Different Version**
+
+```bash
+# Upgrade to a specific stable version
+sudo apt update
+sudo apt install fastlane-sidecar=1.0.0 -y
+sudo systemctl restart fastlane-sidecar
+
+# Upgrade/downgrade to a dev version
+sudo apt update
+sudo apt install fastlane-sidecar=0~dev.abc1234 -y --allow-downgrades
+sudo systemctl restart fastlane-sidecar
+
+# Check installed version
+dpkg -l | grep fastlane-sidecar
 ```
 
 **Step 3: Configure the Service (Optional)**
