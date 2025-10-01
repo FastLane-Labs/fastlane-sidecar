@@ -17,10 +17,10 @@ func TestCalculateTOBPriority(t *testing.T) {
 			name:      "TOB with bid 1000",
 			bidAmount: big.NewInt(1000),
 			expected: [16]uint64{
-				3,    // tier
-				0,    // bid amount (positions 1-4, big-endian)
+				3, // tier
+				0, // bid amount (positions 1-4, big-endian)
 				0, 0,
-				1000, // bid amount continues
+				1000,                            // bid amount continues
 				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // rest unused
 			},
 		},
@@ -94,9 +94,9 @@ func TestCalculateOpportunityPriority(t *testing.T) {
 
 func TestCalculateBackrunPriority(t *testing.T) {
 	tests := []struct {
-		name       string
-		bidAmount  *big.Int
-		oppGasTip  *big.Int
+		name      string
+		bidAmount *big.Int
+		oppGasTip *big.Int
 	}{
 		{
 			name:      "Backrun with 1 ETH bid",
@@ -141,15 +141,15 @@ func TestCalculateBackrunPriority(t *testing.T) {
 
 func TestPriorityOrdering(t *testing.T) {
 	// Create various transactions with different priorities
-	tob1 := CalculateTOBPriority(big.NewInt(1000))  // Higher bid
-	tob2 := CalculateTOBPriority(big.NewInt(500))   // Lower bid
+	tob1 := CalculateTOBPriority(big.NewInt(1000)) // Higher bid
+	tob2 := CalculateTOBPriority(big.NewInt(500))  // Lower bid
 
-	opp1 := CalculateOpportunityPriority(big.NewInt(100e9))  // Higher gas price
-	backrun1 := CalculateBackrunPriority(big.NewInt(2e18), big.NewInt(100e9))  // Higher bid, same gas price as opp1
-	backrun2 := CalculateBackrunPriority(big.NewInt(1e18), big.NewInt(100e9))  // Lower bid, same gas price as opp1
+	opp1 := CalculateOpportunityPriority(big.NewInt(100e9))                   // Higher gas price
+	backrun1 := CalculateBackrunPriority(big.NewInt(2e18), big.NewInt(100e9)) // Higher bid, same gas price as opp1
+	backrun2 := CalculateBackrunPriority(big.NewInt(1e18), big.NewInt(100e9)) // Lower bid, same gas price as opp1
 
-	opp2 := CalculateOpportunityPriority(big.NewInt(50e9))  // Lower gas price
-	backrun3 := CalculateBackrunPriority(big.NewInt(3e18), big.NewInt(50e9))  // Same gas price as opp2
+	opp2 := CalculateOpportunityPriority(big.NewInt(50e9))                   // Lower gas price
+	backrun3 := CalculateBackrunPriority(big.NewInt(3e18), big.NewInt(50e9)) // Same gas price as opp2
 
 	tests := []struct {
 		name     string
@@ -288,16 +288,16 @@ func TestSortByPriority(t *testing.T) {
 	// 3. Backrun bunch 2 (80 gwei): opp, then backruns by bid
 	// 4. Backrun bunch 3 (50 gwei): opp, then backruns by bid
 	expected := []string{
-		"tob_bid_3eth",              // TOB tier: highest bid first
+		"tob_bid_3eth", // TOB tier: highest bid first
 		"tob_bid_2eth",
 		"tob_bid_1eth",
-		"bunch1_opp",                // Bunch 1 (100 gwei): highest gas price
+		"bunch1_opp", // Bunch 1 (100 gwei): highest gas price
 		"bunch1_backrun1",
-		"bunch2_opp",                // Bunch 2 (80 gwei)
-		"bunch2_backrun1_high",      // Higher bid first
+		"bunch2_opp",           // Bunch 2 (80 gwei)
+		"bunch2_backrun1_high", // Higher bid first
 		"bunch2_backrun2_low",
-		"bunch3_opp",                // Bunch 3 (50 gwei): lowest gas price
-		"bunch3_backrun1_high",      // Sorted by bid (highest to lowest)
+		"bunch3_opp",           // Bunch 3 (50 gwei): lowest gas price
+		"bunch3_backrun1_high", // Sorted by bid (highest to lowest)
 		"bunch3_backrun2_mid",
 		"bunch3_backrun3_low",
 	}

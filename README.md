@@ -164,6 +164,45 @@ sudo journalctl -u fastlane-sidecar -f
 sudo journalctl -u fastlane-sidecar -n 100
 ```
 
+## Configuration
+
+The sidecar requires configuration for the Fastlane auction contract:
+
+```bash
+fastlane-sidecar \
+  -fastlane-contract=0x1234567890123456789012345678901234567890 \
+  -tob-method-sig=0xaabbccdd \
+  -backrun-method-sig=0x11223344
+```
+
+### Required Flags
+
+- `-fastlane-contract` - Hex address of the Fastlane auction contract
+- `-tob-method-sig` - Method signature (4 bytes hex) for Top-of-Block bids
+- `-backrun-method-sig` - Method signature (4 bytes hex) for Backrun bids
+
+### Optional Flags
+
+- `-socket-base-path` - Base path for Unix sockets (default: `/home/monad/monad-bft/fastlane`)
+- `-gateway-url` - WebSocket URL for MEV gateway (default: `ws://localhost:8080`)
+- `-log-level` - Log level: debug, info, warn, error (default: `debug`)
+- `-pool-max-duration-ms` - Max time to hold transactions in pool (default: `60000`)
+
+### Example systemd Configuration
+
+```bash
+sudo systemctl edit fastlane-sidecar
+
+# Add:
+[Service]
+ExecStart=
+ExecStart=/usr/bin/fastlane-sidecar \
+  -log-level=info \
+  -fastlane-contract=0x1234567890123456789012345678901234567890 \
+  -tob-method-sig=0xaabbccdd \
+  -backrun-method-sig=0x11223344
+```
+
 ## Security
 
 The Debian package:
