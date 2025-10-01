@@ -20,10 +20,9 @@ type Config struct {
 	PoolMaxDuration         time.Duration
 	AuctionCycleTime        time.Duration
 	StreamingDelay          time.Duration
-	// TODO: Add when implementing transaction classification
-	// FastlaneContract   common.Address
-	// TOBMethodSig       [4]byte
-	// BackrunMethodSig   [4]byte
+	FastlaneContract        string // Hex address of the fastlane auction contract
+	TOBMethodSig            string // Hex signature of the TOB bid method (e.g., "0x12345678")
+	BackrunMethodSig        string // Hex signature of the backrun bid method (e.g., "0x87654321")
 }
 
 func NewConfig() *Config {
@@ -39,6 +38,9 @@ func NewConfig() *Config {
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 60000, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
 	fs.IntVar(&streamingDelayMs, "streaming-delay-ms", 100, "Delay before streaming auction results (ms)")
+	fs.StringVar(&conf.FastlaneContract, "fastlane-contract", "", "Fastlane auction contract address (hex)")
+	fs.StringVar(&conf.TOBMethodSig, "tob-method-sig", "", "TOB bid method signature (hex, e.g., 0x12345678)")
+	fs.StringVar(&conf.BackrunMethodSig, "backrun-method-sig", "", "Backrun bid method signature (hex, e.g., 0x87654321)")
 
 	fs.Parse(os.Args[1:])
 
