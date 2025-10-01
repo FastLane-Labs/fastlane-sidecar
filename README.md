@@ -22,12 +22,12 @@ docker run -d \
   -v /home/monad/monad-bft:/home/monad/monad-bft \
   ghcr.io/fastlane-labs/fastlane-sidecar:latest
 
-# Or specify a custom IPC path
+# Or specify a custom socket base path
 docker run -d \
   --name fastlane-sidecar \
-  -v /path/to/your/fastlane.sock:/app/fastlane.sock \
+  -v /custom/path:/custom/path \
   ghcr.io/fastlane-labs/fastlane-sidecar:latest \
-  -ipc-path=/app/fastlane.sock
+  -socket-base-path=/custom/path/fastlane
 ```
 
 #### Build from Source
@@ -74,7 +74,11 @@ sudo apt install fastlane-sidecar
 
 **Step 3: Configure the Service (Optional)**
 
-The service uses the default IPC path `/home/monad/monad-bft/fastlane.sock`. If your Monad validator uses a different path, configure it:
+The service uses the default socket base path `/home/monad/monad-bft/fastlane`, which creates:
+- `/home/monad/monad-bft/fastlane.node_to_sidecar` (node → sidecar)
+- `/home/monad/monad-bft/fastlane.sidecar_to_node` (sidecar → node)
+
+If your Monad validator uses a different path, configure it:
 
 ```bash
 # Edit the service configuration
@@ -83,7 +87,7 @@ sudo systemctl edit fastlane-sidecar
 # Add the following in the editor that opens:
 # [Service]
 # ExecStart=
-# ExecStart=/usr/bin/fastlane-sidecar -log-level=info -ipc-path=/your/custom/path.ipc
+# ExecStart=/usr/bin/fastlane-sidecar -log-level=info -socket-base-path=/your/custom/path
 
 # Save and exit (Ctrl+X, then Y, then Enter in nano)
 ```
@@ -167,4 +171,4 @@ The Debian package:
 - Runs with security hardening enabled (restricted privileges)
 - Integrates with systemd for automatic restart on failure
 
-**Note:** The service must run as the `monad` user because it needs access to the IPC socket at `/home/monad/monad-bft/fastlane.sock`, which is owned by the `monad` user.
+**Note:** The service must run as the `monad` user because it needs access to the Unix sockets in `/home/monad/monad-bft/`, which are owned by the `monad` user.
