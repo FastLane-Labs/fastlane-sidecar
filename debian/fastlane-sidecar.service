@@ -7,7 +7,7 @@ Wants=network.target
 Type=simple
 User=fastlane
 Group=fastlane
-ExecStart=/usr/bin/fastlane-sidecar -log-level=info -http-port=8080
+ExecStart=/usr/bin/fastlane-sidecar -log-level=info
 Restart=always
 
 # Security settings
