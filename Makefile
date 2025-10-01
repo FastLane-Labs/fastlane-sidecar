@@ -1,27 +1,27 @@
 IMAGE_NAME=ghcr.io/fastlane-labs/fastlane-sidecar
 CONTAINER_NAME=sidecar-runner
-VERSION=$(shell cat VERSION)
+# Auto-detect version from git: use tag if on a tag, otherwise use commit SHA
+VERSION?=$(shell git describe --tags --exact-match 2>/dev/null | sed 's/^v//' || echo "0~dev.$$(git rev-parse --short HEAD)")
+IPC_PATH?=/home/monad/monad-bft/fastlane.sock
 
-.PHONY: run shell build-deb
+.PHONY: build run shell build-deb
+
+build:
+	docker build -t $(IMAGE_NAME) .
 
 run:
-ifndef CONTAINER_ID
-	$(error Please provide CONTAINER_ID, e.g. make run CONTAINER_ID=a8fc3ade5a9c)
-endif
 	docker run --rm -it \
-		-v /var/run/docker.sock:/var/run/docker.sock \
-		-p 8080:8080 \
+		-v $(dir $(IPC_PATH)):$(dir $(IPC_PATH)) \
 		--name $(CONTAINER_NAME) \
 		$(IMAGE_NAME) \
-		-docker-container-id $(CONTAINER_ID)
+		-ipc-path=$(IPC_PATH)
 
 shell:
 	docker run --rm -it \
-		-v /var/run/docker.sock:/var/run/docker.sock \
-		-p 8080:8080 \
+		-v $(dir $(IPC_PATH)):$(dir $(IPC_PATH)) \
 		--name $(CONTAINER_NAME) \
-		$(IMAGE_NAME) \
-		bash
+		--entrypoint /bin/sh \
+		$(IMAGE_NAME)
 
 build-deb:
 	./debian/build-deb.sh $(VERSION)

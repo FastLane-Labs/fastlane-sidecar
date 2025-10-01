@@ -4,7 +4,13 @@ set -e
 
 # Configuration
 PACKAGE_NAME="fastlane-sidecar"
-VERSION=${1:-$(cat VERSION)}
+# Version must be provided as first argument
+if [ -z "$1" ]; then
+    echo "Error: VERSION argument is required"
+    echo "Usage: $0 <version>"
+    exit 1
+fi
+VERSION=$1
 ARCH="amd64"
 BUILD_DIR="build"
 DEB_DIR="${BUILD_DIR}/debian"
@@ -29,7 +35,7 @@ mkdir -p "${DEB_DIR}/lib/systemd/system"
 
 # Build the Go binary
 echo "Building Go binary..."
-CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o "${DEB_DIR}/usr/bin/fastlane-sidecar" .
+CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o "${DEB_DIR}/usr/bin/fastlane-sidecar" ./cmd/sidecar
 
 # Make binary executable
 chmod +x "${DEB_DIR}/usr/bin/fastlane-sidecar"
