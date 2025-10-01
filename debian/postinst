@@ -2,19 +2,12 @@
 
 set -e
 
-# Create fastlane user and group
-if ! getent group fastlane > /dev/null 2>&1; then
-    groupadd --system fastlane
-fi
-
-if ! getent passwd fastlane > /dev/null 2>&1; then
-    useradd --system --gid fastlane --no-create-home --shell /bin/false fastlane
-fi
-
 # Reload systemd to recognize the new service
 systemctl daemon-reload
 
 echo "Fastlane Sidecar installed successfully!"
+echo ""
+echo "Note: The service runs as the 'monad' user to access the Monad validator's IPC socket."
 echo ""
 echo "Next steps:"
 echo "  1. Configure if needed: sudo systemctl edit fastlane-sidecar"

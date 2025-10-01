@@ -5,8 +5,8 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=fastlane
-Group=fastlane
+User=monad
+Group=monad
 ExecStart=/usr/bin/fastlane-sidecar -log-level=info
 Restart=always
 

@@ -163,6 +163,8 @@ sudo journalctl -u fastlane-sidecar -n 100
 ## Security
 
 The Debian package:
-- Creates a dedicated `fastlane` system user
-- Runs with security hardening enabled (restricted privileges, no network access except what's needed)
+- Runs as the `monad` user to access the Monad validator's IPC socket
+- Runs with security hardening enabled (restricted privileges)
 - Integrates with systemd for automatic restart on failure
+
+**Note:** The service must run as the `monad` user because it needs access to the IPC socket at `/home/monad/monad-bft/fastlane.sock`, which is owned by the `monad` user.

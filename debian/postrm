@@ -17,14 +17,5 @@ case "$1" in
         # Reload daemon after service operations
         systemctl daemon-reload || true
 
-        # Remove user and group
-        if getent passwd fastlane > /dev/null 2>&1; then
-            userdel fastlane
-        fi
-
-        if getent group fastlane > /dev/null 2>&1; then
-            groupdel fastlane
-        fi
-
         ;;
 esac
