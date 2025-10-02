@@ -77,31 +77,32 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        binary: [sidecar, generate-envelope]
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
         exclude:
           - goos: windows
             goarch: arm64
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
           cache: true
-      
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -v -o fastlane-sidecar-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/sidecar
-      
+          go build -v -o fastlane-${{ matrix.binary }}-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/${{ matrix.binary }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: fastlane-sidecar-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: fastlane-sidecar-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: fastlane-${{ matrix.binary }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: fastlane-${{ matrix.binary }}-${{ matrix.goos }}-${{ matrix.goarch }}
