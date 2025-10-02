@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -141,6 +142,30 @@ func run(homeDir, network, validatorPubkey, validatorKeystore, output, keystoreP
 	}
 	sidecarPubStr := "0x" + hex.EncodeToString(crypto.CompressPubkey(&sidecarKey.PublicKey))
 	log.Printf("✓ Sidecar public key: %s\n", sidecarPubStr)
+
+	// Check if sidecar keystore already exists
+	if _, err := os.Stat(keystorePath); err == nil {
+		// Keystore exists - warn about overwriting
+		fmt.Println()
+		log.Println("⚠️  WARNING: Sidecar keystore already exists!")
+		fmt.Printf("    Location: %s\n", keystorePath)
+		fmt.Println()
+		fmt.Println("Continuing will:")
+		fmt.Println("  1. Generate a NEW sidecar keypair (different public key)")
+		fmt.Println("  2. OVERWRITE the existing keystore file")
+		fmt.Println("  3. Require MANUAL APPROVAL from FastLane again")
+		fmt.Println()
+		fmt.Print("Do you want to continue? [y/N]: ")
+
+		var response string
+		fmt.Scanln(&response)
+		response = strings.ToLower(strings.TrimSpace(response))
+
+		if response != "y" && response != "yes" {
+			return fmt.Errorf("operation cancelled by user")
+		}
+		fmt.Println()
+	}
 
 	// Get sidecar keystore password from env
 	sidecarPassword := os.Getenv(sidecarKeystorePasswordEnvVar)

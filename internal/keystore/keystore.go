@@ -16,12 +16,12 @@ import (
 
 // Keystore represents an encrypted Ethereum-compatible keystore
 type Keystore struct {
-	Version    int           `json:"version,omitempty"` // Version 1: hex string encrypted, Version 2: raw bytes encrypted
-	Ciphertext string        `json:"ciphertext"`
-	Checksum   string        `json:"checksum"`
-	Cipher     CipherParams  `json:"cipher"`
-	KDF        KDFParams     `json:"kdf"`
-	Hash       string        `json:"hash"`
+	Version    int          `json:"version,omitempty"` // Version 1: hex string encrypted, Version 2: raw bytes encrypted
+	Ciphertext string       `json:"ciphertext"`
+	Checksum   string       `json:"checksum"`
+	Cipher     CipherParams `json:"cipher"`
+	KDF        KDFParams    `json:"kdf"`
+	Hash       string       `json:"hash"`
 }
 
 type CipherParams struct {
