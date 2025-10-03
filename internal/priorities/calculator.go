@@ -8,49 +8,64 @@ import (
 )
 
 // CalculateTOBPriority calculates priority for a top of block bid
+// Priority layout (lexicographic ordering, higher = higher priority):
+// [0]: tier = 3 (TOB - highest)
+// [1-4]: bid amount (higher bid = higher priority)
+// [5-15]: unused (0)
 func CalculateTOBPriority(bidAmount *big.Int) [16]uint64 {
 	var priority [16]uint64
 
-	// Set bid type to 2 (TOB)
-	priority[0] = 2
+	// Set tier to 3 (TOB - highest priority)
+	priority[0] = 3
 
-	// Encode bid amount in last 4 elements
-	encodeBidAmount(&priority, bidAmount)
+	// Encode bid amount in positions 1-4
+	encodeBigIntToSlice(&priority, 1, bidAmount)
 
 	return priority
 }
 
 // CalculateOpportunityPriority calculates priority for an opportunity transaction
+// Priority layout:
+// [0]: tier = 2 (backrun)
+// [1-4]: gas price (higher gas price = higher priority)
+// [5]: tx type = 1 (opportunity - higher than backrun bid)
+// [6-15]: unused (0)
 func CalculateOpportunityPriority(gasTip *big.Int) [16]uint64 {
 	var priority [16]uint64
 
-	// Set bid type to 1 (backrun)
-	priority[0] = 1
+	// Set tier to 2 (backrun)
+	priority[0] = 2
 
-	// Set transaction type to 2 (opportunity)
-	priority[1] = 2
+	// Encode gas price in positions 1-4
+	encodeBigIntToSlice(&priority, 1, gasTip)
 
-	// Encode gas tip in priority[8..12]
-	encodeGasTip(&priority, gasTip)
+	// Set tx type to 1 (opportunity - comes before backrun bids)
+	priority[5] = 1
 
 	return priority
 }
 
 // CalculateBackrunPriority calculates priority for a backrun bid
+// Priority layout:
+// [0]: tier = 2 (backrun)
+// [1-4]: gas price (same as opportunity tx - for grouping)
+// [5]: tx type = 0 (backrun bid - lower than opportunity)
+// [6-9]: bid amount (higher bid = higher priority)
+// [10-15]: unused (0)
 func CalculateBackrunPriority(bidAmount *big.Int, oppGasTip *big.Int) [16]uint64 {
 	var priority [16]uint64
 
-	// Set bid type to 1 (backrun)
-	priority[0] = 1
+	// Set tier to 2 (backrun)
+	priority[0] = 2
 
-	// Set transaction type to 1 (backrun bid)
-	priority[1] = 1
+	// Encode opportunity tx gas price in positions 1-4
+	encodeBigIntToSlice(&priority, 1, oppGasTip)
 
-	// Encode opportunity tx gas tip in priority[8..12]
-	encodeGasTip(&priority, oppGasTip)
+	// Set tx type to 0 (backrun bid - comes after opportunity)
+	priority[5] = 0
 
-	// Encode bid amount in priority[12..]
-	encodeBidAmount(&priority, bidAmount)
+	// Encode bid amount in positions 6-9
+	encodeBigIntToSlice(&priority, 6, bidAmount)
 
 	return priority
 }
@@ -92,15 +107,16 @@ func ComparePriorities(a, b [16]uint64) int {
 	return 0
 }
 
-// encodeBidAmount encodes a big.Int bid amount into the last 4 elements of priority array
-// Uses little-endian encoding across the 4 uint64s
-func encodeBidAmount(priority *[16]uint64, amount *big.Int) {
-	if amount == nil {
+// encodeBigIntToSlice encodes a big.Int into 4 consecutive uint64 slots starting at offset
+// The value is encoded big-endian across the 4 uint64s for proper lexicographic comparison
+// offset specifies where to start writing (e.g., 1 for positions 1-4, 6 for positions 6-9)
+func encodeBigIntToSlice(priority *[16]uint64, offset int, value *big.Int) {
+	if value == nil || offset < 0 || offset+4 > 16 {
 		return
 	}
 
 	// Convert to bytes (big-endian from big.Int)
-	bytes := amount.Bytes()
+	bytes := value.Bytes()
 
 	// Pad to 32 bytes if needed
 	if len(bytes) < 32 {
@@ -109,109 +125,63 @@ func encodeBidAmount(priority *[16]uint64, amount *big.Int) {
 		bytes = padded
 	}
 
-	// Take only the first 32 bytes if amount is larger than uint256
+	// Take only the last 32 bytes if value is larger than uint256
 	if len(bytes) > 32 {
 		bytes = bytes[len(bytes)-32:]
 	}
 
-	// Convert to 4 uint64s in little-endian order
-	// bytes[0:8] -> priority[15], bytes[8:16] -> priority[14], bytes[16:24] -> priority[13], bytes[24:32] -> priority[12]
+	// Convert to 4 uint64s in big-endian order for proper lexicographic comparison
+	// bytes[0:8] -> priority[offset], bytes[8:16] -> priority[offset+1], etc.
 	for i := 0; i < 4; i++ {
 		var val uint64
 		for j := 0; j < 8; j++ {
-			if i*8+j < len(bytes) {
-				val |= uint64(bytes[31-(i*8+j)]) << (j * 8)
-			}
+			val = (val << 8) | uint64(bytes[i*8+j])
 		}
-		priority[12+i] = val
-	}
-}
-
-// encodeGasTip encodes a big.Int gas tip into priority[8..12]
-// Uses little-endian encoding across the 4 uint64s
-func encodeGasTip(priority *[16]uint64, gasTip *big.Int) {
-	if gasTip == nil {
-		return
-	}
-
-	// Convert to bytes (big-endian from big.Int)
-	bytes := gasTip.Bytes()
-
-	// Pad to 32 bytes if needed
-	if len(bytes) < 32 {
-		padded := make([]byte, 32)
-		copy(padded[32-len(bytes):], bytes)
-		bytes = padded
-	}
-
-	// Take only the first 32 bytes if amount is larger than uint256
-	if len(bytes) > 32 {
-		bytes = bytes[len(bytes)-32:]
-	}
-
-	// Convert to 4 uint64s in little-endian order for priority[8..12]
-	// bytes[0:8] -> priority[11], bytes[8:16] -> priority[10], bytes[16:24] -> priority[9], bytes[24:32] -> priority[8]
-	for i := 0; i < 4; i++ {
-		var val uint64
-		for j := 0; j < 8; j++ {
-			if i*8+j < len(bytes) {
-				val |= uint64(bytes[31-(i*8+j)]) << (j * 8)
-			}
-		}
-		priority[8+i] = val
+		priority[offset+i] = val
 	}
 }
 
 // FormatPriority returns a human-readable string representation of a priority
 func FormatPriority(priority [16]uint64) string {
-	bidType := priority[0]
+	tier := priority[0]
 
-	switch bidType {
-	case 2:
-		bidAmount := decodeBidAmount(priority)
+	switch tier {
+	case 3:
+		// TOB transaction
+		bidAmount := decodeBigIntFromSlice(priority, 1)
 		return "TopOfBlock(bid=" + bidAmount.String() + ")"
-	case 1:
-		txType := priority[1]
-		switch txType {
-		case 1:
-			gasTip := decodeGasTip(priority)
-			return "Backrun(opportunity, gasTip=" + gasTip.String() + ")"
-		case 2:
-			bidAmount := decodeBidAmount(priority)
-			gasTip := decodeGasTip(priority)
-			return "Backrun(bid=" + bidAmount.String() + ", oppGasTip=" + gasTip.String() + ")"
-		default:
-			return "Backrun(unknown_type=" + string(rune(txType)) + ")"
+	case 2:
+		// Backrun transaction
+		txType := priority[5]
+		gasPrice := decodeBigIntFromSlice(priority, 1)
+		if txType == 1 {
+			// Opportunity tx
+			return "Backrun(opportunity, gasPrice=" + gasPrice.String() + ")"
+		} else {
+			// Backrun bid
+			bidAmount := decodeBigIntFromSlice(priority, 6)
+			return "Backrun(bid=" + bidAmount.String() + ", oppGasPrice=" + gasPrice.String() + ")"
 		}
+	case 0:
+		return "Normal"
 	default:
-		return "Unknown(type=" + string(rune(bidType)) + ")"
+		return "Unknown(tier=" + string(rune(tier)) + ")"
 	}
 }
 
-// decodeBidAmount decodes the bid amount from the last 4 elements of priority array
-func decodeBidAmount(priority [16]uint64) *big.Int {
-	// Extract 4 uint64s and convert to bytes
-	bytes := make([]byte, 32)
-
-	for i := 0; i < 4; i++ {
-		val := priority[12+i]
-		for j := 0; j < 8; j++ {
-			bytes[31-(i*8+j)] = byte(val >> (j * 8))
-		}
+// decodeBigIntFromSlice decodes a big.Int from 4 consecutive uint64 slots starting at offset
+func decodeBigIntFromSlice(priority [16]uint64, offset int) *big.Int {
+	if offset < 0 || offset+4 > 16 {
+		return big.NewInt(0)
 	}
 
-	return new(big.Int).SetBytes(bytes)
-}
-
-// decodeGasTip decodes the gas tip from priority[8..12]
-func decodeGasTip(priority [16]uint64) *big.Int {
-	// Extract 4 uint64s and convert to bytes
+	// Extract 4 uint64s and convert to bytes (big-endian)
 	bytes := make([]byte, 32)
 
 	for i := 0; i < 4; i++ {
-		val := priority[8+i]
+		val := priority[offset+i]
 		for j := 0; j < 8; j++ {
-			bytes[31-(i*8+j)] = byte(val >> (j * 8))
+			bytes[i*8+j] = byte(val >> (56 - j*8))
 		}
 	}
 
