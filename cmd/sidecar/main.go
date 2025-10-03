@@ -12,8 +12,16 @@ func main() {
 	log.Info("config", "config", config)
 
 	shutdownChan := make(chan struct{})
-	sidecar := orchestrator.NewSidecar(config, shutdownChan)
-	sidecar.Start()
+	sidecar, err := orchestrator.NewSidecar(config, shutdownChan)
+	if err != nil {
+		log.Error("Failed to create sidecar", "error", err)
+		panic(err)
+	}
+
+	if err := sidecar.Start(); err != nil {
+		log.Error("Failed to start sidecar", "error", err)
+		panic(err)
+	}
 
 	log.Info("Sidecar started ...")
 	<-shutdownChan

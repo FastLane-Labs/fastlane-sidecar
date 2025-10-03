@@ -38,8 +38,15 @@ type Sidecar struct {
 	cancel context.CancelFunc
 }
 
-func NewSidecar(config *config.Config, shutdownChan chan struct{}) *Sidecar {
+func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	filter, err := processor.NewFilter(config.FastlaneContract, config.TOBMethodSig, config.BackrunMethodSig)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
 	return &Sidecar{
 		config:        config,
 		shutdownChan:  shutdownChan,
@@ -47,10 +54,10 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) *Sidecar {
 		nodeSender:    ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
 		gatewayClient: gateway.NewClient(config.GatewayURL, ctx),
 		txPool:        pool.NewTransactionPool(config.PoolMaxDuration),
-		filter:        processor.NewFilter(),
+		filter:        filter,
 		ctx:           ctx,
 		cancel:        cancel,
-	}
+	}, nil
 }
 
 func (s *Sidecar) Start() error {
