@@ -157,8 +157,12 @@ func DecryptKey(ks *Keystore, password string) ([]byte, error) {
 	// Handle different keystore versions
 	var privateKey []byte
 	if ks.Version == 2 || ks.Version == 0 {
-		// Version 2 (or no version): raw bytes encrypted (Monad format)
-		privateKey = decrypted
+		// Version 2 (or no version): decrypted bytes are IKM (Input Keying Material)
+		// Derive the actual secp256k1 private key from IKM using hash_to_scalar
+		privateKey, err = DeriveSecp256k1Key(decrypted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive secp256k1 key from IKM: %w", err)
+		}
 	} else {
 		// Version 1: hex string encrypted
 		privateKeyHexStr := string(decrypted)
