@@ -82,7 +82,7 @@ func EncryptKey(privateKey []byte, password string) (*Keystore, error) {
 	checksum := h.Sum(nil)
 
 	return &Keystore{
-		Version:    1, // Version 1: raw bytes encrypted (our format)
+		Version:    2, // Version 2: raw bytes encrypted
 		Ciphertext: hex.EncodeToString(ciphertext),
 		Checksum:   hex.EncodeToString(checksum),
 		Cipher: CipherParams{
@@ -156,11 +156,11 @@ func DecryptKey(ks *Keystore, password string) ([]byte, error) {
 
 	// Handle different keystore versions
 	var privateKey []byte
-	if ks.Version == 1 {
-		// Version 1: raw bytes encrypted
+	if ks.Version == 2 || ks.Version == 0 {
+		// Version 2 (or no version): raw bytes encrypted (Monad format)
 		privateKey = decrypted
 	} else {
-		// Version 2 (or no version/default): hex string encrypted (Monad/Python format)
+		// Version 1: hex string encrypted
 		privateKeyHexStr := string(decrypted)
 		privateKey, err = hex.DecodeString(privateKeyHexStr)
 		if err != nil {
