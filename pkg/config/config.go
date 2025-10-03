@@ -3,12 +3,13 @@ package config
 import (
 	"flag"
 	"os"
+	"path/filepath"
 	"time"
 )
 
 const (
-	NodeToSidecarSuffix = ".node_to_sidecar"
-	SidecarToNodeSuffix = ".sidecar_to_node"
+	NodeToSidecarSuffix = "node_to_sidecar"
+	SidecarToNodeSuffix = "sidecar_to_node"
 )
 
 type Config struct {
@@ -33,7 +34,7 @@ func NewConfig() *Config {
 
 	fs := flag.NewFlagSet("UserConfig", flag.ExitOnError)
 	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level")
-	fs.StringVar(&conf.SocketBasePath, "socket-base-path", "/home/monad/monad-bft/fastlane", "Base path for Unix sockets (will append suffixes)")
+	fs.StringVar(&conf.SocketBasePath, "home", "/home/monad/fastlane/", "Base path for Unix sockets (will append suffixes)")
 	fs.StringVar(&conf.GatewayURL, "gateway-url", "ws://localhost:8080", "WebSocket URL for MEV gateway")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 60000, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
@@ -49,8 +50,8 @@ func NewConfig() *Config {
 	conf.StreamingDelay = time.Duration(streamingDelayMs) * time.Millisecond
 
 	// Derive socket paths from base path
-	conf.NodeToSidecarSocketPath = conf.SocketBasePath + NodeToSidecarSuffix
-	conf.SidecarToNodeSocketPath = conf.SocketBasePath + SidecarToNodeSuffix
+	conf.NodeToSidecarSocketPath = filepath.Join(conf.SocketBasePath, NodeToSidecarSuffix)
+	conf.SidecarToNodeSocketPath = filepath.Join(conf.SocketBasePath, SidecarToNodeSuffix)
 
 	return &conf
 }
