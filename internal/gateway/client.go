@@ -80,9 +80,6 @@ func (c *Client) reconnectLoop() {
 
 			log.Info("Reconnected to gateway", "url", c.url)
 
-			// Reset delay on successful connection
-			delay = c.reconnectDelay
-
 			// Start reading messages
 			go c.readMessages()
 			return
