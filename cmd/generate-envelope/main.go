@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -89,10 +90,10 @@ func main() {
 	// Set default output if not specified
 	outputPath := *output
 	if outputPath == "" {
-		outputPath = *homeDir + "/" + defaultOutputFile
+		outputPath = filepath.Join(*homeDir, defaultOutputFile)
 	}
 
-	keystorePath := *homeDir + "/" + defaultKeystoreFile
+	keystorePath := filepath.Join(*homeDir, defaultKeystoreFile)
 
 	if err := run(*homeDir, *network, *validatorPubkey, *validatorKeystore, *validatorPassword, *sidecarPassword, outputPath, keystorePath); err != nil {
 		log.Fatalf("Error: %v", err)
