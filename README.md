@@ -190,7 +190,7 @@ sudo journalctl -u fastlane-sidecar -n 100
 
 ## Configuration
 
-The sidecar requires configuration for the Fastlane auction contract:
+The sidecar can be configured for the Fastlane auction contract:
 
 ```bash
 fastlane-sidecar \
@@ -199,14 +199,11 @@ fastlane-sidecar \
   -backrun-method-sig=0x11223344
 ```
 
-### Required Flags
+### Configuration Flags
 
-- `-fastlane-contract` - Hex address of the Fastlane auction contract
-- `-tob-method-sig` - Method signature (4 bytes hex) for Top-of-Block bids
-- `-backrun-method-sig` - Method signature (4 bytes hex) for Backrun bids
-
-### Optional Flags
-
+- `-fastlane-contract` - Fastlane auction contract address (default: `0x0000000000000000000000000000000000000000`)
+- `-tob-method-sig` - TOB bid method signature (default: `0x00000000`)
+- `-backrun-method-sig` - Backrun bid method signature (default: `0x00000000`)
 - `-home` - Base path for Unix sockets (default: `/home/monad/fastlane/`)
 - `-gateway-url` - WebSocket URL for MEV gateway (default: `ws://localhost:8080`)
 - `-log-level` - Log level: debug, info, warn, error (default: `debug`)

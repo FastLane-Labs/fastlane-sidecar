@@ -39,9 +39,9 @@ func NewConfig() *Config {
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 60000, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
 	fs.IntVar(&streamingDelayMs, "streaming-delay-ms", 100, "Delay before streaming auction results (ms)")
-	fs.StringVar(&conf.FastlaneContract, "fastlane-contract", "", "Fastlane auction contract address (hex)")
-	fs.StringVar(&conf.TOBMethodSig, "tob-method-sig", "", "TOB bid method signature (hex, e.g., 0x12345678)")
-	fs.StringVar(&conf.BackrunMethodSig, "backrun-method-sig", "", "Backrun bid method signature (hex, e.g., 0x87654321)")
+	fs.StringVar(&conf.FastlaneContract, "fastlane-contract", "0x0000000000000000000000000000000000000000", "Fastlane auction contract address (hex)")
+	fs.StringVar(&conf.TOBMethodSig, "tob-method-sig", "0x00000000", "TOB bid method signature (hex, e.g., 0x12345678)")
+	fs.StringVar(&conf.BackrunMethodSig, "backrun-method-sig", "0x00000000", "Backrun bid method signature (hex, e.g., 0x87654321)")
 
 	fs.Parse(os.Args[1:])
 
