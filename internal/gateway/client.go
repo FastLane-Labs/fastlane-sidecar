@@ -20,7 +20,7 @@ type Client struct {
 	txChan chan []byte // Channel for receiving transactions from gateway
 
 	// Reconnection state
-	reconnectDelay time.Duration
+	reconnectDelay    time.Duration
 	maxReconnectDelay time.Duration
 }
 

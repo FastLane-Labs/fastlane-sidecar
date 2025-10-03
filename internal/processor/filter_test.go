@@ -18,19 +18,19 @@ const (
 
 func TestNewFilter(t *testing.T) {
 	tests := []struct {
-		name             string
-		contractAddr     string
-		tobSig           string
-		backrunSig       string
-		expectError      bool
-		errorContains    string
+		name          string
+		contractAddr  string
+		tobSig        string
+		backrunSig    string
+		expectError   bool
+		errorContains string
 	}{
 		{
-			name:          "Valid configuration",
-			contractAddr:  testFastlaneContract,
-			tobSig:        testTOBMethodSig,
-			backrunSig:    testBackrunMethodSig,
-			expectError:   false,
+			name:         "Valid configuration",
+			contractAddr: testFastlaneContract,
+			tobSig:       testTOBMethodSig,
+			backrunSig:   testBackrunMethodSig,
+			expectError:  false,
 		},
 		{
 			name:          "Missing contract address",
