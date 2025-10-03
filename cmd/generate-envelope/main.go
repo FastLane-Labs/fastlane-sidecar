@@ -18,15 +18,12 @@ import (
 )
 
 const (
-	defaultNetwork                  = "testnet"
-	defaultHomeDir                  = "/home/monad/fastlane"
-	defaultOutputFile               = "delegation-envelope.json"
-	defaultKeystoreFile             = "sidecar-keystore.json"
-	validatorKeystorePasswordEnvVar = "KEYSTORE_PASSWORD"
-	sidecarKeystorePasswordEnvVar   = "SIDECAR_KEYSTORE_PASSWORD"
-
-	delegationVersion = "v1"
-	unsignedSigLength = 130
+	defaultNetwork      = "testnet"
+	defaultHomeDir      = "/home/monad/fastlane"
+	defaultOutputFile   = "delegation-envelope.json"
+	defaultKeystoreFile = "sidecar-keystore.json"
+	delegationVersion   = "v1"
+	unsignedSigLength   = 130
 )
 
 type Delegation struct {
@@ -66,6 +63,8 @@ func main() {
 	network := flag.String("network", defaultNetwork, "Network (testnet, mainnet)")
 	validatorPubkey := flag.String("validator-pubkey", "", "Validator public key (compressed, 33 bytes, 0x-prefixed)")
 	validatorKeystore := flag.String("validator-keystore", "", "Path to validator keystore file (for signing)")
+	validatorPassword := flag.String("validator-password", "", "Password for validator keystore (will prompt if not provided)")
+	sidecarPassword := flag.String("sidecar-password", "", "Password for sidecar keystore (required)")
 	output := flag.String("output", "", "Output delegation envelope file (default: <home>/delegation-envelope.json)")
 
 	flag.Usage = func() {
@@ -79,13 +78,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  # Generate signed delegation with keystore\n")
 		fmt.Fprintf(os.Stderr, "  %s --validator-keystore validator.json\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Generate for mainnet with custom home directory\n")
-		fmt.Fprintf(os.Stderr, "  %s --network mainnet --home /var/lib/fastlane --validator-keystore validator.json\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --network mainnet --home /var/lib/fastlane --validator-keystore validator.json --sidecar-password mypass\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Output Files (default in %s):\n", defaultHomeDir)
 		fmt.Fprintf(os.Stderr, "  - %s\n", defaultOutputFile)
 		fmt.Fprintf(os.Stderr, "  - %s\n\n", defaultKeystoreFile)
-		fmt.Fprintf(os.Stderr, "Environment Variables:\n")
-		fmt.Fprintf(os.Stderr, "  %s           Password for validator keystore (optional, will prompt if not set)\n", validatorKeystorePasswordEnvVar)
-		fmt.Fprintf(os.Stderr, "  %s   Password for sidecar keystore (required)\n\n", sidecarKeystorePasswordEnvVar)
 	}
 
 	flag.Parse()
@@ -98,12 +94,12 @@ func main() {
 
 	keystorePath := *homeDir + "/" + defaultKeystoreFile
 
-	if err := run(*homeDir, *network, *validatorPubkey, *validatorKeystore, outputPath, keystorePath); err != nil {
+	if err := run(*homeDir, *network, *validatorPubkey, *validatorKeystore, *validatorPassword, *sidecarPassword, outputPath, keystorePath); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }
 
-func run(homeDir, network, validatorPubkey, validatorKeystore, output, keystorePath string) error {
+func run(homeDir, network, validatorPubkey, validatorKeystore, validatorPassword, sidecarPassword, output, keystorePath string) error {
 	log.Println("Monad Delegation Setup Script v1.0.0")
 	fmt.Println()
 
@@ -128,7 +124,7 @@ func run(homeDir, network, validatorPubkey, validatorKeystore, output, keystoreP
 	}
 
 	// Load validator key (signed mode) or use public key (unsigned mode)
-	validatorKey, validatorPubStr, err := loadValidatorKey(validatorKeystore, validatorPubkey)
+	validatorKey, validatorPubStr, err := loadValidatorKey(validatorKeystore, validatorPubkey, validatorPassword)
 	if err != nil {
 		return fmt.Errorf("failed to load validator key: %w", err)
 	}
@@ -167,10 +163,9 @@ func run(homeDir, network, validatorPubkey, validatorKeystore, output, keystoreP
 		fmt.Println()
 	}
 
-	// Get sidecar keystore password from env
-	sidecarPassword := os.Getenv(sidecarKeystorePasswordEnvVar)
+	// Validate sidecar password is provided
 	if sidecarPassword == "" {
-		return fmt.Errorf("%s environment variable is required", sidecarKeystorePasswordEnvVar)
+		return fmt.Errorf("--sidecar-password is required")
 	}
 
 	// Create encrypted sidecar keystore
@@ -264,7 +259,7 @@ func run(homeDir, network, validatorPubkey, validatorKeystore, output, keystoreP
 
 // loadValidatorKey loads the validator private key from keystore (signed mode)
 // or returns nil key with the provided public key string (unsigned mode)
-func loadValidatorKey(keystorePath, pubkey string) (*ecdsa.PrivateKey, string, error) {
+func loadValidatorKey(keystorePath, pubkey, password string) (*ecdsa.PrivateKey, string, error) {
 	if keystorePath != "" {
 		// Signed mode: load and decrypt keystore
 		ks, err := keystore.LoadKeystore(keystorePath)
@@ -272,7 +267,6 @@ func loadValidatorKey(keystorePath, pubkey string) (*ecdsa.PrivateKey, string, e
 			return nil, "", fmt.Errorf("load keystore: %w", err)
 		}
 
-		password := os.Getenv(validatorKeystorePasswordEnvVar)
 		if password == "" {
 			fmt.Print("Enter validator keystore password: ")
 			passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
