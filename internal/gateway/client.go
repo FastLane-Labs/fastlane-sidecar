@@ -17,10 +17,10 @@ import (
 )
 
 type Client struct {
-	url    string
-	ctx    context.Context
-	conn   *websocket.Conn
-	connMu sync.RWMutex
+	url     string
+	ctx     context.Context
+	conn    *websocket.Conn
+	connMu  sync.RWMutex
 	writeMu sync.Mutex // Serializes writes to WebSocket (required by gorilla/websocket)
 
 	// Authentication
