@@ -2,9 +2,11 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
+	"github.com/FastLane-Labs/fastlane-sidecar/internal/auth"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/gateway"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/ipc"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/pool"
@@ -47,12 +49,50 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
+	// Initialize gateway client if not disabled
+	var gatewayClient *gateway.Client
+	if !config.DisableGateway {
+		// Initialize credentials (will be populated during registration)
+		creds := &auth.Credentials{}
+
+		// Load authentication credentials if provided
+		if config.DelegationPath != "" && config.KeystorePath != "" {
+			log.Info("Loading authentication credentials")
+
+			// Load delegation envelope
+			envelope, err := auth.LoadDelegationEnvelope(config.DelegationPath)
+			if err != nil {
+				cancel()
+				return nil, fmt.Errorf("failed to load delegation envelope: %w", err)
+			}
+			creds.DelegationEnvelope = envelope
+
+			// Load sidecar key
+			sidecarKey, err := auth.LoadSidecarKey(config.KeystorePath, config.KeystorePass)
+			if err != nil {
+				cancel()
+				return nil, fmt.Errorf("failed to load sidecar key: %w", err)
+			}
+			creds.SidecarKey = sidecarKey
+
+			log.Info("Credentials loaded successfully",
+				"validator_pubkey", envelope.Delegation.ValidatorPubkey,
+				"sidecar_pubkey", envelope.Delegation.SidecarPubkey)
+		} else {
+			log.Warn("No authentication credentials provided, gateway connection will use unauthenticated mode (if supported)")
+		}
+
+		gatewayClient = gateway.NewClient(config.GatewayURL, ctx, creds)
+	} else {
+		log.Info("Gateway connection disabled")
+	}
+
 	return &Sidecar{
 		config:        config,
 		shutdownChan:  shutdownChan,
 		nodeListener:  ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
 		nodeSender:    ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
-		gatewayClient: gateway.NewClient(config.GatewayURL, ctx),
+		gatewayClient: gatewayClient,
 		txPool:        pool.NewTransactionPool(config.PoolMaxDuration),
 		filter:        filter,
 		ctx:           ctx,
@@ -71,10 +111,62 @@ func (s *Sidecar) Start() error {
 		return err
 	}
 
-	// Connect to gateway
-	if err := s.gatewayClient.Connect(); err != nil {
-		log.Error("Failed to connect to gateway", "error", err)
-		// Continue without gateway connection for now
+	// Register with gateway if not disabled and credentials are available
+	if !s.config.DisableGateway && s.gatewayClient != nil {
+		if s.config.DelegationPath != "" && s.config.KeystorePath != "" {
+			log.Info("Registering with MEV gateway")
+
+			// Create registration client
+			regClient := auth.NewRegistrationClient(s.config.GatewayURL)
+
+			// Load credentials
+			envelope, err := auth.LoadDelegationEnvelope(s.config.DelegationPath)
+			if err != nil {
+				return fmt.Errorf("failed to load delegation envelope: %w", err)
+			}
+
+			sidecarKey, err := auth.LoadSidecarKey(s.config.KeystorePath, s.config.KeystorePass)
+			if err != nil {
+				return fmt.Errorf("failed to load sidecar key: %w", err)
+			}
+
+			creds := &auth.Credentials{
+				SidecarKey:         sidecarKey,
+				DelegationEnvelope: envelope,
+			}
+
+			// Perform registration
+			registerResp, err := regClient.Register(s.ctx, creds)
+			if err != nil {
+				log.Error("Failed to register with gateway", "error", err)
+				// Continue without gateway for now
+			} else {
+				// Update credentials with tokens
+				creds.SidecarID = registerResp.SidecarID
+				creds.AccessToken = registerResp.AccessToken
+				creds.RefreshToken = registerResp.RefreshToken
+
+				expiry, err := auth.ParseExpiryTime(registerResp.ExpiresAt)
+				if err != nil {
+					log.Warn("Failed to parse token expiry", "error", err)
+					expiry = time.Now().Add(10 * time.Minute)
+				}
+				creds.TokenExpiry = expiry
+
+				log.Info("Successfully registered with gateway",
+					"sidecar_id", registerResp.SidecarID,
+					"expires_at", registerResp.ExpiresAt)
+
+				// Create a new gateway client with the credentials
+				s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, creds)
+			}
+		}
+
+		// Connect to gateway WebSocket
+		if err := s.gatewayClient.Connect(); err != nil {
+			log.Error("Failed to connect to gateway", "error", err)
+			// Continue without gateway connection for now
+		}
 	}
 
 	// Start processing goroutines
@@ -118,6 +210,11 @@ func (s *Sidecar) processNodeTransactions() {
 
 // processGatewayTransactions handles transactions from the gateway
 func (s *Sidecar) processGatewayTransactions() {
+	if s.gatewayClient == nil {
+		log.Info("Gateway disabled, not processing gateway transactions")
+		return
+	}
+
 	gatewayTxChan := s.gatewayClient.GetTransactionChannel()
 
 	for {
@@ -208,7 +305,7 @@ func (s *Sidecar) handleTransactionDropped(txHashBytes []byte) {
 		log.Info("Transaction dropped by node and removed from pool", "hash", txHash.Hex(), "source", removedTx.Source)
 
 		// Notify gateway about the dropped transaction if it didn't come from gateway
-		if removedTx.Source != "gateway" {
+		if s.gatewayClient != nil && removedTx.Source != "gateway" {
 			if err := s.gatewayClient.NotifyTransactionDropped(txHash); err != nil {
 				log.Error("Failed to notify gateway of dropped transaction", "error", err, "hash", txHash.Hex())
 			}
@@ -284,6 +381,9 @@ func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
 
 // forwardToGateway sends transaction to gateway (if it didn't come from there)
 func (s *Sidecar) forwardToGateway(txBytes []byte) {
+	if s.gatewayClient == nil {
+		return // Gateway disabled
+	}
 	if err := s.gatewayClient.SendTransactionBytes(txBytes); err != nil {
 		log.Error("Failed to send transaction to gateway", "error", err)
 	}
