@@ -71,8 +71,8 @@ func CreateRefreshPoP(challenge, refreshToken, sessionNonce string, sidecarKey *
 
 	// Create refresh PoP object
 	popObj := map[string]interface{}{
-		"ctx":       RefreshContext,
-		"challenge": challenge,
+		"ctx":        RefreshContext,
+		"challenge":  challenge,
 		"token_hash": tokenHashHex,
 	}
 

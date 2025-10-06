@@ -35,9 +35,9 @@ type ChallengeResponse struct {
 // RegisterRequest is sent to POST /v1/sidecars/register
 type RegisterRequest struct {
 	Challenge          string                 `json:"challenge"`
-	SidecarPubkey      string                 `json:"sidecar_pubkey"`       // 0x-prefixed hex, 33 bytes compressed
+	SidecarPubkey      string                 `json:"sidecar_pubkey"` // 0x-prefixed hex, 33 bytes compressed
 	DelegationEnvelope DelegationEnvelope     `json:"delegation_envelope"`
-	PopSignature       string                 `json:"pop_signature"`        // 0x-prefixed hex, 65 bytes
+	PopSignature       string                 `json:"pop_signature"` // 0x-prefixed hex, 65 bytes
 	ClientInfo         map[string]interface{} `json:"client_info,omitempty"`
 }
 

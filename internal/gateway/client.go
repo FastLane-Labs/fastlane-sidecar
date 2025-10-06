@@ -28,7 +28,7 @@ type Client struct {
 	heartbeatTicker *time.Ticker
 
 	// JSON-RPC
-	msgID  atomic.Int64
+	msgID           atomic.Int64
 	pendingRequests sync.Map // map[int64]chan *JSONRPCResponse
 
 	// Channels
