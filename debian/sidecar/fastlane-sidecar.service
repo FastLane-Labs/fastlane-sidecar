@@ -7,7 +7,10 @@ Wants=network.target
 Type=simple
 User=monad
 Group=monad
-ExecStart=/usr/bin/fastlane-sidecar -log-level=info
+ExecStart=/usr/bin/fastlane-sidecar \
+    --log-level info
+    --password "${SIDECAR_KEYSTORE_PASSWORD}"
+EnvironmentFile=/home/monad/fastlane/.env
 Restart=always
 
 # Security settings
