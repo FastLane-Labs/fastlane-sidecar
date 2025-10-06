@@ -14,9 +14,9 @@ const (
 
 type Config struct {
 	LogLevel                string
-	SocketBasePath          string
-	NodeToSidecarSocketPath string // Derived from SocketBasePath + ".node_to_sidecar"
-	SidecarToNodeSocketPath string // Derived from SocketBasePath + ".sidecar_to_node"
+	HomePath                string
+	NodeToSidecarSocketPath string // Derived from HomePath + ".node_to_sidecar"
+	SidecarToNodeSocketPath string // Derived from HomePath + ".sidecar_to_node"
 	GatewayURL              string
 	PoolMaxDuration         time.Duration
 	AuctionCycleTime        time.Duration
@@ -42,7 +42,7 @@ func NewConfig() *Config {
 
 	fs := flag.NewFlagSet("UserConfig", flag.ExitOnError)
 	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level")
-	fs.StringVar(&conf.SocketBasePath, "home", "/home/monad/fastlane/", "Base path for Unix sockets (will append suffixes)")
+	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
 	fs.StringVar(&conf.GatewayURL, "gateway-url", "http://localhost:8080", "HTTP URL for MEV gateway (will be converted to WebSocket)")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 60000, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
@@ -50,8 +50,8 @@ func NewConfig() *Config {
 	fs.StringVar(&conf.FastlaneContract, "fastlane-contract", "0x0000000000000000000000000000000000000000", "Fastlane auction contract address (hex)")
 	fs.StringVar(&conf.TOBMethodSig, "tob-method-sig", "0x00000000", "TOB bid method signature (hex, e.g., 0x12345678)")
 	fs.StringVar(&conf.BackrunMethodSig, "backrun-method-sig", "0x00000000", "Backrun bid method signature (hex, e.g., 0x87654321)")
-	fs.StringVar(&conf.DelegationPath, "delegation", "/home/monad/fastlane/delegation-envelope.json", "Path to delegation envelope JSON file")
-	fs.StringVar(&conf.KeystorePath, "keystore", "/home/monad/fastlane/sidecar-keystore.json", "Path to sidecar keystore file")
+	fs.StringVar(&conf.DelegationPath, "delegation", "delegation-envelope.json", "Delegation envelope JSON filename (relative to home)")
+	fs.StringVar(&conf.KeystorePath, "keystore", "sidecar-keystore.json", "Sidecar keystore filename (relative to home)")
 	fs.StringVar(&conf.KeystorePass, "password", "", "Password for sidecar keystore (or set SIDECAR_PASSWORD env var)")
 	fs.BoolVar(&conf.DisableGateway, "disable-gateway", false, "Disable gateway connection")
 
@@ -66,9 +66,13 @@ func NewConfig() *Config {
 	conf.AuctionCycleTime = time.Duration(auctionCycleMs) * time.Millisecond
 	conf.StreamingDelay = time.Duration(streamingDelayMs) * time.Millisecond
 
-	// Derive socket paths from base path
-	conf.NodeToSidecarSocketPath = filepath.Join(conf.SocketBasePath, NodeToSidecarSuffix)
-	conf.SidecarToNodeSocketPath = filepath.Join(conf.SocketBasePath, SidecarToNodeSuffix)
+	// Derive socket paths from home directory
+	conf.NodeToSidecarSocketPath = filepath.Join(conf.HomePath, NodeToSidecarSuffix)
+	conf.SidecarToNodeSocketPath = filepath.Join(conf.HomePath, SidecarToNodeSuffix)
+
+	// Build full paths for delegation and keystore files
+	conf.DelegationPath = filepath.Join(conf.HomePath, conf.DelegationPath)
+	conf.KeystorePath = filepath.Join(conf.HomePath, conf.KeystorePath)
 
 	return &conf
 }
