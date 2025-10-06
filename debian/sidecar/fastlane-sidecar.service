@@ -9,6 +9,7 @@ User=monad
 Group=monad
 ExecStart=/usr/bin/fastlane-sidecar \
     --log-level info \
+    --network "${NETWORK}" \
     --password "${SIDECAR_KEYSTORE_PASSWORD}"
 EnvironmentFile=/home/monad/fastlane/.env
 Restart=always

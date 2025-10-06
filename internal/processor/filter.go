@@ -10,6 +10,13 @@ import (
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
 )
 
+const (
+	// Method signatures for Fastlane contract
+	// TODO: Update these with actual method signatures from the deployed contract
+	TOBMethodSig     = "0x00000000"
+	BackrunMethodSig = "0x00000000"
+)
+
 type Filter struct {
 	blacklistedAddresses map[common.Address]bool
 	minGasPrice          uint64
@@ -18,7 +25,7 @@ type Filter struct {
 	backrunMethodSig     [4]byte
 }
 
-func NewFilter(fastlaneContractHex, tobMethodSigHex, backrunMethodSigHex string) (*Filter, error) {
+func NewFilter(fastlaneContractHex string) (*Filter, error) {
 	f := &Filter{
 		blacklistedAddresses: make(map[common.Address]bool),
 	}
@@ -27,33 +34,21 @@ func NewFilter(fastlaneContractHex, tobMethodSigHex, backrunMethodSigHex string)
 	if fastlaneContractHex == "" {
 		return nil, fmt.Errorf("fastlane contract address is required")
 	}
-	if tobMethodSigHex == "" {
-		return nil, fmt.Errorf("TOB method signature is required")
-	}
-	if backrunMethodSigHex == "" {
-		return nil, fmt.Errorf("backrun method signature is required")
-	}
 
 	// Parse fastlane contract address
 	f.fastlaneContract = common.HexToAddress(fastlaneContractHex)
 
-	// Parse TOB method signature
-	if len(tobMethodSigHex) < 10 || tobMethodSigHex[:2] != "0x" {
-		return nil, fmt.Errorf("invalid TOB method signature format: %s (expected 0x12345678)", tobMethodSigHex)
-	}
-	tobBytes := common.FromHex(tobMethodSigHex)
+	// Parse TOB method signature from constant
+	tobBytes := common.FromHex(TOBMethodSig)
 	if len(tobBytes) < 4 {
-		return nil, fmt.Errorf("TOB method signature too short: %s", tobMethodSigHex)
+		return nil, fmt.Errorf("TOB method signature too short: %s", TOBMethodSig)
 	}
 	copy(f.tobMethodSig[:], tobBytes[:4])
 
-	// Parse backrun method signature
-	if len(backrunMethodSigHex) < 10 || backrunMethodSigHex[:2] != "0x" {
-		return nil, fmt.Errorf("invalid backrun method signature format: %s (expected 0x12345678)", backrunMethodSigHex)
-	}
-	backrunBytes := common.FromHex(backrunMethodSigHex)
+	// Parse backrun method signature from constant
+	backrunBytes := common.FromHex(BackrunMethodSig)
 	if len(backrunBytes) < 4 {
-		return nil, fmt.Errorf("backrun method signature too short: %s", backrunMethodSigHex)
+		return nil, fmt.Errorf("backrun method signature too short: %s", BackrunMethodSig)
 	}
 	copy(f.backrunMethodSig[:], backrunBytes[:4])
 
@@ -150,4 +145,16 @@ func (f *Filter) SetTOBMethodSignature(sig [4]byte) {
 
 func (f *Filter) SetBackrunMethodSignature(sig [4]byte) {
 	f.backrunMethodSig = sig
+}
+
+// SetMethodSignatures sets both method signatures from hex strings (for testing)
+func (f *Filter) SetMethodSignatures(tobSigHex, backrunSigHex string) {
+	tobBytes := common.FromHex(tobSigHex)
+	if len(tobBytes) >= 4 {
+		copy(f.tobMethodSig[:], tobBytes[:4])
+	}
+	backrunBytes := common.FromHex(backrunSigHex)
+	if len(backrunBytes) >= 4 {
+		copy(f.backrunMethodSig[:], backrunBytes[:4])
+	}
 }

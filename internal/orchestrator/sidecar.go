@@ -43,7 +43,7 @@ type Sidecar struct {
 func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	filter, err := processor.NewFilter(config.FastlaneContract, config.TOBMethodSig, config.BackrunMethodSig)
+	filter, err := processor.NewFilter(config.FastlaneContract)
 	if err != nil {
 		cancel()
 		return nil, err
