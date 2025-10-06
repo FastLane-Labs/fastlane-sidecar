@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	// Dummy test configuration
+	// Test configuration
 	testFastlaneContract = "0x1234567890123456789012345678901234567890"
 	testTOBMethodSig     = "0xaabbccdd"
 	testBackrunMethodSig = "0x11223344"
@@ -20,63 +20,25 @@ func TestNewFilter(t *testing.T) {
 	tests := []struct {
 		name          string
 		contractAddr  string
-		tobSig        string
-		backrunSig    string
 		expectError   bool
 		errorContains string
 	}{
 		{
 			name:         "Valid configuration",
 			contractAddr: testFastlaneContract,
-			tobSig:       testTOBMethodSig,
-			backrunSig:   testBackrunMethodSig,
 			expectError:  false,
 		},
 		{
 			name:          "Missing contract address",
 			contractAddr:  "",
-			tobSig:        testTOBMethodSig,
-			backrunSig:    testBackrunMethodSig,
 			expectError:   true,
 			errorContains: "contract address is required",
-		},
-		{
-			name:          "Missing TOB signature",
-			contractAddr:  testFastlaneContract,
-			tobSig:        "",
-			backrunSig:    testBackrunMethodSig,
-			expectError:   true,
-			errorContains: "TOB method signature is required",
-		},
-		{
-			name:          "Missing backrun signature",
-			contractAddr:  testFastlaneContract,
-			tobSig:        testTOBMethodSig,
-			backrunSig:    "",
-			expectError:   true,
-			errorContains: "backrun method signature is required",
-		},
-		{
-			name:          "Invalid TOB signature format",
-			contractAddr:  testFastlaneContract,
-			tobSig:        "aabbccdd", // missing 0x prefix
-			backrunSig:    testBackrunMethodSig,
-			expectError:   true,
-			errorContains: "invalid TOB method signature format",
-		},
-		{
-			name:          "TOB signature too short",
-			contractAddr:  testFastlaneContract,
-			tobSig:        "0xaabb", // only 2 bytes
-			backrunSig:    testBackrunMethodSig,
-			expectError:   true,
-			errorContains: "invalid TOB method signature format", // Caught by length check in format validation
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filter, err := NewFilter(tt.contractAddr, tt.tobSig, tt.backrunSig)
+			filter, err := NewFilter(tt.contractAddr)
 
 			if tt.expectError {
 				if err == nil {
@@ -97,10 +59,11 @@ func TestNewFilter(t *testing.T) {
 }
 
 func TestClassifyTOBTransaction(t *testing.T) {
-	filter, err := NewFilter(testFastlaneContract, testTOBMethodSig, testBackrunMethodSig)
+	filter, err := NewFilter(testFastlaneContract)
 	if err != nil {
 		t.Fatalf("Failed to create filter: %v", err)
 	}
+	filter.SetMethodSignatures(testTOBMethodSig, testBackrunMethodSig)
 
 	// Create a TOB bid transaction
 	bidAmount := big.NewInt(1e18) // 1 ETH
@@ -131,10 +94,11 @@ func TestClassifyTOBTransaction(t *testing.T) {
 }
 
 func TestClassifyBackrunTransaction(t *testing.T) {
-	filter, err := NewFilter(testFastlaneContract, testTOBMethodSig, testBackrunMethodSig)
+	filter, err := NewFilter(testFastlaneContract)
 	if err != nil {
 		t.Fatalf("Failed to create filter: %v", err)
 	}
+	filter.SetMethodSignatures(testTOBMethodSig, testBackrunMethodSig)
 
 	// Create a backrun bid transaction
 	bidAmount := big.NewInt(5e17) // 0.5 ETH
@@ -174,10 +138,11 @@ func TestClassifyBackrunTransaction(t *testing.T) {
 }
 
 func TestClassifyNormalTransaction(t *testing.T) {
-	filter, err := NewFilter(testFastlaneContract, testTOBMethodSig, testBackrunMethodSig)
+	filter, err := NewFilter(testFastlaneContract)
 	if err != nil {
 		t.Fatalf("Failed to create filter: %v", err)
 	}
+	filter.SetMethodSignatures(testTOBMethodSig, testBackrunMethodSig)
 
 	// Create a normal transaction (to different address)
 	tx := ethTypes.NewTransaction(
@@ -201,10 +166,11 @@ func TestClassifyNormalTransaction(t *testing.T) {
 }
 
 func TestClassifyTransactionToFastlaneWithUnknownMethod(t *testing.T) {
-	filter, err := NewFilter(testFastlaneContract, testTOBMethodSig, testBackrunMethodSig)
+	filter, err := NewFilter(testFastlaneContract)
 	if err != nil {
 		t.Fatalf("Failed to create filter: %v", err)
 	}
+	filter.SetMethodSignatures(testTOBMethodSig, testBackrunMethodSig)
 
 	// Create a transaction to fastlane contract but with unknown method
 	unknownCalldata := []byte{0xff, 0xee, 0xdd, 0xcc, 0x00, 0x00, 0x00, 0x00}
@@ -230,10 +196,11 @@ func TestClassifyTransactionToFastlaneWithUnknownMethod(t *testing.T) {
 }
 
 func TestExtractBidAmountFromTOBData(t *testing.T) {
-	filter, err := NewFilter(testFastlaneContract, testTOBMethodSig, testBackrunMethodSig)
+	filter, err := NewFilter(testFastlaneContract)
 	if err != nil {
 		t.Fatalf("Failed to create filter: %v", err)
 	}
+	filter.SetMethodSignatures(testTOBMethodSig, testBackrunMethodSig)
 
 	tests := []struct {
 		name      string
@@ -270,10 +237,11 @@ func TestExtractBidAmountFromTOBData(t *testing.T) {
 }
 
 func TestExtractBidDataFromBackrunData(t *testing.T) {
-	filter, err := NewFilter(testFastlaneContract, testTOBMethodSig, testBackrunMethodSig)
+	filter, err := NewFilter(testFastlaneContract)
 	if err != nil {
 		t.Fatalf("Failed to create filter: %v", err)
 	}
+	filter.SetMethodSignatures(testTOBMethodSig, testBackrunMethodSig)
 
 	bidAmount := big.NewInt(2e18)
 	targetHash := common.HexToHash("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
@@ -296,7 +264,7 @@ func buildTOBCalldata(bidAmount *big.Int) []byte {
 	// 4 bytes method sig + 32 bytes uint256
 	calldata := make([]byte, 36)
 
-	// Copy method signature
+	// Copy method signature (using test-specific signature)
 	sig := common.FromHex(testTOBMethodSig)
 	copy(calldata[0:4], sig)
 
@@ -311,7 +279,7 @@ func buildBackrunCalldata(targetHash common.Hash, bidAmount *big.Int) []byte {
 	// 4 bytes method sig + 32 bytes hash + 32 bytes uint256
 	calldata := make([]byte, 68)
 
-	// Copy method signature
+	// Copy method signature (using test-specific signature)
 	sig := common.FromHex(testBackrunMethodSig)
 	copy(calldata[0:4], sig)
 
