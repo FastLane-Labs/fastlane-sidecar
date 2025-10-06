@@ -58,7 +58,12 @@ func (rc *RegistrationClient) GetChallenge(ctx context.Context) (*ChallengeRespo
 		return nil, fmt.Errorf("failed to parse challenge response: %w", err)
 	}
 
-	log.Debug("Got challenge from gateway", "challenge", challengeResp.Challenge[:16]+"...")
+	// Log challenge safely (truncate only if longer than 16 chars)
+	challengePreview := challengeResp.Challenge
+	if len(challengePreview) > 16 {
+		challengePreview = challengePreview[:16] + "..."
+	}
+	log.Debug("Got challenge from gateway", "challenge", challengePreview)
 	return &challengeResp, nil
 }
 

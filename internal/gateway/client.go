@@ -21,6 +21,7 @@ type Client struct {
 	ctx    context.Context
 	conn   *websocket.Conn
 	connMu sync.RWMutex
+	writeMu sync.Mutex // Serializes writes to WebSocket (required by gorilla/websocket)
 
 	// Authentication
 	creds           *auth.Credentials
@@ -56,6 +57,11 @@ func (c *Client) Connect() error {
 	// Ensure we have valid tokens
 	if c.creds.AccessToken == "" {
 		return fmt.Errorf("no access token available, registration required")
+	}
+
+	// Check if token is expired
+	if time.Now().After(c.creds.TokenExpiry) {
+		return fmt.Errorf("access token expired at %v", c.creds.TokenExpiry)
 	}
 
 	// Get WebSocket URL
@@ -153,8 +159,12 @@ func (c *Client) sendRequest(method string, params interface{}) (*JSONRPCRespons
 	c.pendingRequests.Store(id, respChan)
 	defer c.pendingRequests.Delete(id)
 
-	// Send request
-	if err := conn.WriteJSON(req); err != nil {
+	// Serialize writes to WebSocket (required by gorilla/websocket)
+	c.writeMu.Lock()
+	err := conn.WriteJSON(req)
+	c.writeMu.Unlock()
+
+	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 

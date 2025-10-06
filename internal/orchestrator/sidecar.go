@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +36,9 @@ type Sidecar struct {
 	txPool        *pool.TransactionPool
 	filter        *processor.Filter
 
+	// Authentication
+	credentials *auth.Credentials // Loaded once in constructor, reused for registration
+
 	// Context for cancellation
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -49,40 +53,41 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
-	// Initialize gateway client if not disabled
-	var gatewayClient *gateway.Client
-	if !config.DisableGateway {
-		// Initialize credentials (will be populated during registration)
-		creds := &auth.Credentials{}
+	// Load authentication credentials if gateway is enabled and credentials are provided
+	var credentials *auth.Credentials
+	if !config.DisableGateway && config.DelegationPath != "" && config.KeystorePath != "" {
+		log.Info("Loading authentication credentials")
 
-		// Load authentication credentials if provided
-		if config.DelegationPath != "" && config.KeystorePath != "" {
-			log.Info("Loading authentication credentials")
-
-			// Load delegation envelope
-			envelope, err := auth.LoadDelegationEnvelope(config.DelegationPath)
-			if err != nil {
-				cancel()
-				return nil, fmt.Errorf("failed to load delegation envelope: %w", err)
-			}
-			creds.DelegationEnvelope = envelope
-
-			// Load sidecar key
-			sidecarKey, err := auth.LoadSidecarKey(config.KeystorePath, config.KeystorePass)
-			if err != nil {
-				cancel()
-				return nil, fmt.Errorf("failed to load sidecar key: %w", err)
-			}
-			creds.SidecarKey = sidecarKey
-
-			log.Info("Credentials loaded successfully",
-				"validator_pubkey", envelope.Delegation.ValidatorPubkey,
-				"sidecar_pubkey", envelope.Delegation.SidecarPubkey)
-		} else {
-			log.Warn("No authentication credentials provided, gateway connection will use unauthenticated mode (if supported)")
+		// Load delegation envelope
+		envelope, err := auth.LoadDelegationEnvelope(config.DelegationPath)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to load delegation envelope: %w", err)
 		}
 
-		gatewayClient = gateway.NewClient(config.GatewayURL, ctx, creds)
+		// Load sidecar key
+		sidecarKey, err := auth.LoadSidecarKey(config.KeystorePath, config.KeystorePass)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to load sidecar key: %w", err)
+		}
+
+		// Validate that sidecar public key matches the delegation
+		if err := auth.ValidateSidecarPubkeyMatch(envelope, sidecarKey); err != nil {
+			cancel()
+			return nil, fmt.Errorf("sidecar key validation failed: %w", err)
+		}
+
+		credentials = &auth.Credentials{
+			SidecarKey:         sidecarKey,
+			DelegationEnvelope: envelope,
+		}
+
+		log.Info("Credentials loaded and validated successfully",
+			"validator_pubkey", envelope.Delegation.ValidatorPubkey,
+			"sidecar_pubkey", envelope.Delegation.SidecarPubkey)
+	} else if !config.DisableGateway {
+		log.Warn("No authentication credentials provided, gateway connection will use unauthenticated mode (if supported)")
 	} else {
 		log.Info("Gateway connection disabled")
 	}
@@ -92,9 +97,10 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		shutdownChan:  shutdownChan,
 		nodeListener:  ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
 		nodeSender:    ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
-		gatewayClient: gatewayClient,
+		gatewayClient: nil, // Will be created in Start() after registration
 		txPool:        pool.NewTransactionPool(config.PoolMaxDuration),
 		filter:        filter,
+		credentials:   credentials,
 		ctx:           ctx,
 		cancel:        cancel,
 	}, nil
@@ -112,60 +118,20 @@ func (s *Sidecar) Start() error {
 	}
 
 	// Register with gateway if not disabled and credentials are available
-	if !s.config.DisableGateway && s.gatewayClient != nil {
-		if s.config.DelegationPath != "" && s.config.KeystorePath != "" {
-			log.Info("Registering with MEV gateway")
-
-			// Create registration client
-			regClient := auth.NewRegistrationClient(s.config.GatewayURL)
-
-			// Load credentials
-			envelope, err := auth.LoadDelegationEnvelope(s.config.DelegationPath)
-			if err != nil {
-				return fmt.Errorf("failed to load delegation envelope: %w", err)
-			}
-
-			sidecarKey, err := auth.LoadSidecarKey(s.config.KeystorePath, s.config.KeystorePass)
-			if err != nil {
-				return fmt.Errorf("failed to load sidecar key: %w", err)
-			}
-
-			creds := &auth.Credentials{
-				SidecarKey:         sidecarKey,
-				DelegationEnvelope: envelope,
-			}
-
-			// Perform registration
-			registerResp, err := regClient.Register(s.ctx, creds)
-			if err != nil {
-				log.Error("Failed to register with gateway", "error", err)
-				// Continue without gateway for now
+	if !s.config.DisableGateway && s.credentials != nil {
+		if err := s.registerWithGateway(); err != nil {
+			// Check if error is recoverable (e.g., waiting for whitelist, network issues)
+			if isRetryableError(err) {
+				log.Warn("Gateway registration failed with retryable error, will retry in background",
+					"error", err)
+				// Start background retry goroutine
+				go s.retryGatewayRegistration()
 			} else {
-				// Update credentials with tokens
-				creds.SidecarID = registerResp.SidecarID
-				creds.AccessToken = registerResp.AccessToken
-				creds.RefreshToken = registerResp.RefreshToken
-
-				expiry, err := auth.ParseExpiryTime(registerResp.ExpiresAt)
-				if err != nil {
-					log.Warn("Failed to parse token expiry", "error", err)
-					expiry = time.Now().Add(10 * time.Minute)
-				}
-				creds.TokenExpiry = expiry
-
-				log.Info("Successfully registered with gateway",
-					"sidecar_id", registerResp.SidecarID,
-					"expires_at", registerResp.ExpiresAt)
-
-				// Create a new gateway client with the credentials
-				s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, creds)
+				log.Error("Gateway registration failed with non-retryable error",
+					"error", err,
+					"help", "Check delegation signature, validator whitelist status, or gateway connectivity")
+				// Continue without gateway - this is likely a fatal auth error
 			}
-		}
-
-		// Connect to gateway WebSocket
-		if err := s.gatewayClient.Connect(); err != nil {
-			log.Error("Failed to connect to gateway", "error", err)
-			// Continue without gateway connection for now
 		}
 	}
 
@@ -188,6 +154,119 @@ func (s *Sidecar) Stop() {
 	if s.gatewayClient != nil {
 		s.gatewayClient.Close()
 	}
+}
+
+// registerWithGateway performs the initial gateway registration
+func (s *Sidecar) registerWithGateway() error {
+	log.Info("Registering with MEV gateway")
+
+	// Create registration client
+	regClient := auth.NewRegistrationClient(s.config.GatewayURL)
+
+	// Perform registration using credentials loaded in constructor
+	registerResp, err := regClient.Register(s.ctx, s.credentials)
+	if err != nil {
+		return fmt.Errorf("registration failed: %w", err)
+	}
+
+	// Update credentials with tokens
+	s.credentials.SidecarID = registerResp.SidecarID
+	s.credentials.AccessToken = registerResp.AccessToken
+	s.credentials.RefreshToken = registerResp.RefreshToken
+
+	expiry, err := auth.ParseExpiryTime(registerResp.ExpiresAt)
+	if err != nil {
+		log.Warn("Failed to parse token expiry", "error", err)
+		expiry = time.Now().Add(10 * time.Minute)
+	}
+	s.credentials.TokenExpiry = expiry
+
+	log.Info("Successfully registered with gateway",
+		"sidecar_id", registerResp.SidecarID,
+		"expires_at", registerResp.ExpiresAt)
+
+	// Create gateway client with authenticated credentials
+	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials)
+
+	// Connect to gateway WebSocket
+	if err := s.gatewayClient.Connect(); err != nil {
+		return fmt.Errorf("WebSocket connection failed: %w", err)
+	}
+
+	return nil
+}
+
+// retryGatewayRegistration retries registration in the background with exponential backoff
+func (s *Sidecar) retryGatewayRegistration() {
+	backoff := 30 * time.Second
+	maxBackoff := 5 * time.Minute
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			log.Info("Gateway registration retry stopped")
+			return
+		case <-time.After(backoff):
+			log.Info("Retrying gateway registration", "backoff", backoff)
+
+			if err := s.registerWithGateway(); err != nil {
+				if !isRetryableError(err) {
+					log.Error("Gateway registration retry failed with non-retryable error, stopping retries",
+						"error", err)
+					return
+				}
+
+				log.Warn("Gateway registration retry failed, will retry again",
+					"error", err,
+					"next_retry_in", backoff)
+
+				// Exponential backoff
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			} else {
+				log.Info("Gateway registration retry succeeded")
+				return
+			}
+		}
+	}
+}
+
+// isRetryableError determines if a registration error is retryable
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// Network/connectivity errors - retryable
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "network") ||
+		strings.Contains(errStr, "EOF") {
+		return true
+	}
+
+	// HTTP status errors that might be retryable
+	// 401 Unauthorized - might be whitelist pending
+	// 403 Forbidden - might be whitelist pending
+	// 503 Service Unavailable - temporary gateway issue
+	// 429 Too Many Requests - rate limiting
+	if strings.Contains(errStr, "status 401") ||
+		strings.Contains(errStr, "status 403") ||
+		strings.Contains(errStr, "status 503") ||
+		strings.Contains(errStr, "status 429") {
+		return true
+	}
+
+	// Non-retryable errors:
+	// 400 Bad Request - invalid delegation format
+	// Signature verification failures - wrong keys
+	// Other 4xx errors - client errors
+	return false
 }
 
 // processNodeTransactions handles transactions from the node

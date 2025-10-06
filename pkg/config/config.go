@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -33,9 +34,10 @@ type Config struct {
 	FastlaneContract        string // Hex address of the fastlane auction contract
 
 	// Authentication parameters
-	DelegationPath string // Path to delegation envelope JSON file
-	KeystorePath   string // Path to sidecar keystore file
-	KeystorePass   string // Password for sidecar keystore
+	DelegationPath   string // Path to delegation envelope JSON file
+	KeystorePath     string // Path to sidecar keystore file
+	KeystorePass     string // Password for sidecar keystore (loaded from env var or file)
+	PasswordFilePath string // Path to file containing keystore password
 
 	// Network configuration
 	Network string // Network name (e.g., "testnet", "testnet-2", "mainnet")
@@ -60,16 +62,27 @@ func NewConfig() *Config {
 	fs.IntVar(&streamingDelayMs, "streaming-delay-ms", 100, "Delay before streaming auction results (ms)")
 	fs.StringVar(&conf.DelegationPath, "delegation", "delegation-envelope.json", "Delegation envelope JSON filename (relative to home)")
 	fs.StringVar(&conf.KeystorePath, "keystore", "sidecar-keystore.json", "Sidecar keystore filename (relative to home)")
-	fs.StringVar(&conf.KeystorePass, "password", "", "Password for sidecar keystore (or set SIDECAR_PASSWORD env var)")
+	fs.StringVar(&conf.PasswordFilePath, "password-file", "", "Path to file containing keystore password")
 	fs.StringVar(&conf.Network, "network", "testnet", "Network name (testnet, testnet-2, mainnet)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional, uses network default if not set)")
 	fs.BoolVar(&conf.DisableGateway, "disable-gateway", false, "Disable gateway connection")
 
 	fs.Parse(os.Args[1:])
 
-	// Allow password to be set via environment variable for security
-	if conf.KeystorePass == "" {
-		conf.KeystorePass = os.Getenv("SIDECAR_PASSWORD")
+	// Load password in order of preference:
+	// 1. From password file (most secure for production)
+	// 2. From SIDECAR_PASSWORD environment variable
+	// 3. Empty (will fail if credentials are needed)
+	if conf.PasswordFilePath != "" {
+		passwordBytes, err := os.ReadFile(conf.PasswordFilePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read password file %s: %v\n", conf.PasswordFilePath, err)
+			return nil
+		}
+		// Trim whitespace/newlines from password file
+		conf.KeystorePass = strings.TrimSpace(string(passwordBytes))
+	} else if envPass := os.Getenv("SIDECAR_PASSWORD"); envPass != "" {
+		conf.KeystorePass = envPass
 	}
 
 	conf.PoolMaxDuration = time.Duration(poolMaxDurationMs) * time.Millisecond
