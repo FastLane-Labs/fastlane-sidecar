@@ -65,6 +65,9 @@ func ParseFastlaneMessage(msgData []byte) (string, []byte) {
 		txHash := data[:32]
 		return "TxDropped", txHash
 
+	case 2: // Heartbeat variant (unit variant, no data)
+		return "Heartbeat", nil
+
 	default:
 		return "Unknown", msgData
 	}

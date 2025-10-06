@@ -322,6 +322,10 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 		log.Info("Received TxDropped message", "hash", common.BytesToHash(data[:32]).Hex(), "source", source)
 		s.handleTransactionDropped(data[:32])
 
+	case "Heartbeat":
+		log.Info("Received Heartbeat message", "source", source)
+		// Handle heartbeat message
+
 	default:
 		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
 		// Fallback to old behavior for compatibility
