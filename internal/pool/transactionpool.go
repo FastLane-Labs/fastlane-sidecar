@@ -127,6 +127,13 @@ func (tp *TransactionPool) CleanupOldTransactions() {
 	}
 }
 
+// Size returns the current number of transactions in the pool
+func (tp *TransactionPool) Size() uint64 {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	return uint64(len(tp.allTxs))
+}
+
 // GetStats returns pool statistics
 func (tp *TransactionPool) GetStats() map[string]int {
 	tp.mu.RLock()

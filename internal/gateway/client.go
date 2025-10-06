@@ -39,9 +39,12 @@ type Client struct {
 	reconnectDelay    time.Duration
 	maxReconnectDelay time.Duration
 	reconnecting      atomic.Bool
+
+	// Health stats
+	healthProvider HealthStatsProvider
 }
 
-func NewClient(url string, ctx context.Context, creds *auth.Credentials) *Client {
+func NewClient(url string, ctx context.Context, creds *auth.Credentials, healthProvider HealthStatsProvider) *Client {
 	return &Client{
 		url:               url,
 		ctx:               ctx,
@@ -49,6 +52,7 @@ func NewClient(url string, ctx context.Context, creds *auth.Credentials) *Client
 		txChan:            make(chan []byte, 100),
 		reconnectDelay:    1 * time.Second,
 		maxReconnectDelay: 60 * time.Second,
+		healthProvider:    healthProvider,
 	}
 }
 
@@ -288,6 +292,19 @@ func (c *Client) handleJSONRPCMessage(msg json.RawMessage) error {
 	return fmt.Errorf("unknown message type")
 }
 
+// HealthStatsProvider interface for components that can provide health statistics
+type HealthStatsProvider interface {
+	GetHealthStats() HealthStats
+}
+
+// HealthStats contains sidecar health metrics
+type HealthStats struct {
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+	TxReceived    uint64    `json:"tx_received"`
+	TxStreamed    uint64    `json:"tx_streamed"`
+	PoolSize      uint64    `json:"pool_size"`
+}
+
 // handleNotification handles JSON-RPC notifications from gateway
 func (c *Client) handleNotification(notif JSONRPCNotification) error {
 	switch notif.Method {
@@ -298,6 +315,10 @@ func (c *Client) handleNotification(notif JSONRPCNotification) error {
 	case "auth_refresh_challenge":
 		// Handle in-band token refresh challenge
 		return c.handleRefreshChallenge(notif.Params)
+
+	case "sidecar_health_request":
+		// Handle health stats request from gateway
+		return c.handleHealthRequest(notif.Params)
 
 	default:
 		log.Debug("Unknown notification method", "method", notif.Method)
@@ -458,6 +479,37 @@ func (c *Client) reconnectLoop() {
 
 func (c *Client) GetTransactionChannel() <-chan []byte {
 	return c.txChan
+}
+
+// handleHealthRequest handles health stats request from gateway
+func (c *Client) handleHealthRequest(params interface{}) error {
+	log.Debug("Received health stats request from gateway")
+
+	if c.healthProvider == nil {
+		log.Warn("Health provider not set, cannot respond to health request")
+		return nil
+	}
+
+	// Get health stats from provider
+	stats := c.healthProvider.GetHealthStats()
+
+	// Send response via validator_health_stats method
+	healthParams := map[string]interface{}{
+		"sidecar_id":     c.creds.SidecarID,
+		"last_heartbeat": stats.LastHeartbeat.Format(time.RFC3339),
+		"tx_received":    stats.TxReceived,
+		"tx_streamed":    stats.TxStreamed,
+		"pool_size":      stats.PoolSize,
+	}
+
+	_, err := c.sendRequest("validator_health_stats", healthParams)
+	if err != nil {
+		log.Error("Failed to send health stats", "error", err)
+		return err
+	}
+
+	log.Debug("Sent health stats to gateway", "stats", healthParams)
+	return nil
 }
 
 func (c *Client) Close() error {

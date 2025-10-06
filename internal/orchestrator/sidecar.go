@@ -26,8 +26,11 @@ type Sidecar struct {
 	shutdownChan chan struct{}
 
 	// Statistics
-	txReceived atomic.Uint64
-	bytesTotal atomic.Uint64
+	txReceived      atomic.Uint64
+	bytesTotal      atomic.Uint64
+	txStreamed      atomic.Uint64 // Number of transactions streamed to node with priority
+	lastHeartbeat   atomic.Int64  // Unix timestamp in nanoseconds from node
+	poolSize        atomic.Uint64 // Current transaction pool size
 
 	// Components
 	nodeListener  *ipc.NodeListener
@@ -92,7 +95,7 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		log.Info("Gateway connection disabled")
 	}
 
-	return &Sidecar{
+	s := &Sidecar{
 		config:        config,
 		shutdownChan:  shutdownChan,
 		nodeListener:  ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
@@ -103,7 +106,9 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		credentials:   credentials,
 		ctx:           ctx,
 		cancel:        cancel,
-	}, nil
+	}
+
+	return s, nil
 }
 
 func (s *Sidecar) Start() error {
@@ -156,6 +161,7 @@ func (s *Sidecar) Stop() {
 	}
 }
 
+
 // registerWithGateway performs the initial gateway registration
 func (s *Sidecar) registerWithGateway() error {
 	log.Info("Registering with MEV gateway")
@@ -185,8 +191,8 @@ func (s *Sidecar) registerWithGateway() error {
 		"sidecar_id", registerResp.SidecarID,
 		"expires_at", registerResp.ExpiresAt)
 
-	// Create gateway client with authenticated credentials
-	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials)
+	// Create gateway client with authenticated credentials and health provider
+	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials, s)
 
 	// Connect to gateway WebSocket
 	if err := s.gatewayClient.Connect(); err != nil {
@@ -194,6 +200,22 @@ func (s *Sidecar) registerWithGateway() error {
 	}
 
 	return nil
+}
+
+// GetHealthStats returns current health statistics for the sidecar
+func (s *Sidecar) GetHealthStats() gateway.HealthStats {
+	lastHeartbeatNanos := s.lastHeartbeat.Load()
+	var lastHeartbeat time.Time
+	if lastHeartbeatNanos > 0 {
+		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
+	}
+
+	return gateway.HealthStats{
+		LastHeartbeat: lastHeartbeat,
+		TxReceived:    s.txReceived.Load(),
+		TxStreamed:    s.txStreamed.Load(),
+		PoolSize:      s.poolSize.Load(),
+	}
 }
 
 // retryGatewayRegistration retries registration in the background with exponential backoff
@@ -323,8 +345,8 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 		s.handleTransactionDropped(data[:32])
 
 	case "Heartbeat":
-		log.Info("Received Heartbeat message", "source", source)
-		// Handle heartbeat message
+		log.Debug("Received Heartbeat message", "source", source)
+		s.lastHeartbeat.Store(time.Now().UnixNano())
 
 	default:
 		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
@@ -459,7 +481,9 @@ func (s *Sidecar) handleBackrunBid(txBytes []byte, bidHash common.Hash, bidData 
 func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
 	if err := s.nodeSender.SendTxWithPriority(txWithPriority); err != nil {
 		log.Error("Failed to send transaction to node", "error", err)
+		return
 	}
+	s.txStreamed.Add(1)
 }
 
 // forwardToGateway sends transaction to gateway (if it didn't come from there)
@@ -485,6 +509,8 @@ func (s *Sidecar) cleanupOldTransactions() {
 			return
 		case <-ticker.C:
 			s.txPool.CleanupOldTransactions()
+			// Update pool size metric
+			s.poolSize.Store(s.txPool.Size())
 		}
 	}
 }
