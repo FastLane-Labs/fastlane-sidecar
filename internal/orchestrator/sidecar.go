@@ -26,11 +26,11 @@ type Sidecar struct {
 	shutdownChan chan struct{}
 
 	// Statistics
-	txReceived      atomic.Uint64
-	bytesTotal      atomic.Uint64
-	txStreamed      atomic.Uint64 // Number of transactions streamed to node with priority
-	lastHeartbeat   atomic.Int64  // Unix timestamp in nanoseconds from node
-	poolSize        atomic.Uint64 // Current transaction pool size
+	txReceived    atomic.Uint64
+	bytesTotal    atomic.Uint64
+	txStreamed    atomic.Uint64 // Number of transactions streamed to node with priority
+	lastHeartbeat atomic.Int64  // Unix timestamp in nanoseconds from node
+	poolSize      atomic.Uint64 // Current transaction pool size
 
 	// Components
 	nodeListener  *ipc.NodeListener
@@ -160,7 +160,6 @@ func (s *Sidecar) Stop() {
 		s.gatewayClient.Close()
 	}
 }
-
 
 // registerWithGateway performs the initial gateway registration
 func (s *Sidecar) registerWithGateway() error {
