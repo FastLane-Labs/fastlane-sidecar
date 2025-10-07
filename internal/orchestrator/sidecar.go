@@ -174,10 +174,22 @@ func (s *Sidecar) registerWithGateway() error {
 		return fmt.Errorf("registration failed: %w", err)
 	}
 
-	// Update credentials with tokens
+	// Update credentials with tokens and connection metadata
 	s.credentials.SidecarID = registerResp.SidecarID
 	s.credentials.AccessToken = registerResp.AccessToken
 	s.credentials.RefreshToken = registerResp.RefreshToken
+	s.credentials.WssURL = registerResp.WssURL
+	s.credentials.WsSubprotocol = registerResp.WsSubprotocol
+	if registerResp.HeartbeatInterval > 0 {
+		s.credentials.HeartbeatInterval = time.Duration(registerResp.HeartbeatInterval) * time.Second
+	} else {
+		s.credentials.HeartbeatInterval = 0
+	}
+	if registerResp.MaxInflight > 0 {
+		s.credentials.MaxInflight = registerResp.MaxInflight
+	} else {
+		s.credentials.MaxInflight = 0
+	}
 
 	expiry, err := auth.ParseExpiryTime(registerResp.ExpiresAt)
 	if err != nil {
