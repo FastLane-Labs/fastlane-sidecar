@@ -45,11 +45,16 @@ type Client struct {
 }
 
 func NewClient(url string, ctx context.Context, creds *auth.Credentials, healthProvider HealthStatsProvider) *Client {
+	bufferSize := 100
+	if creds != nil && creds.MaxInflight > 0 {
+		bufferSize = creds.MaxInflight
+	}
+
 	return &Client{
 		url:               url,
 		ctx:               ctx,
 		creds:             creds,
-		txChan:            make(chan []byte, 100),
+		txChan:            make(chan []byte, bufferSize),
 		reconnectDelay:    1 * time.Second,
 		maxReconnectDelay: 60 * time.Second,
 		healthProvider:    healthProvider,
@@ -68,13 +73,19 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("access token expired at %v", c.creds.TokenExpiry)
 	}
 
-	// Get WebSocket URL
-	wsURL := auth.GetWebSocketURL(c.url, "")
+	// Get WebSocket URL (prefer gateway-provided override)
+	wsURL := auth.GetWebSocketURL(c.url, c.creds.WssURL)
 
 	// Prepare headers with Bearer token and subprotocol
+	protocol := c.creds.WsSubprotocol
+	if protocol == "" {
+		protocol = "fastlane.sidecar.v1"
+	}
 	header := http.Header{
-		"Authorization":          []string{"Bearer " + c.creds.AccessToken},
-		"Sec-WebSocket-Protocol": []string{"fastlane.sidecar.v1"},
+		"Authorization": []string{"Bearer " + c.creds.AccessToken},
+	}
+	if protocol != "" {
+		header["Sec-WebSocket-Protocol"] = []string{protocol}
 	}
 
 	log.Info("Connecting to gateway WebSocket", "url", wsURL)
@@ -308,13 +319,17 @@ type HealthStats struct {
 // handleNotification handles JSON-RPC notifications from gateway
 func (c *Client) handleNotification(notif JSONRPCNotification) error {
 	switch notif.Method {
-	case "mev_subscription":
-		// Handle mempool subscription notifications
-		return c.handleMempoolSubscription(notif.Params)
+	case "validator_bundle_notification":
+		// Handle bundle notifications (exactly 2 txs: target + backrun)
+		return c.handleBundleNotification(notif.Params)
 
-	case "auth_refresh_challenge":
-		// Handle in-band token refresh challenge
-		return c.handleRefreshChallenge(notif.Params)
+	case "validator_auth_expiring":
+		// Handle token expiry warnings
+		return c.handleAuthExpiring(notif.Params)
+
+	case "validator_rate_limited":
+		// Handle backpressure signals
+		return c.handleRateLimited(notif.Params)
 
 	case "sidecar_health_request":
 		// Handle health stats request from gateway
@@ -327,27 +342,29 @@ func (c *Client) handleNotification(notif JSONRPCNotification) error {
 	return nil
 }
 
-// handleMempoolSubscription handles mempool transaction notifications
-func (c *Client) handleMempoolSubscription(params interface{}) error {
+// handleBundleNotification handles bundle notifications from gateway
+// Bundles contain exactly 2 transactions: target (opportunity) + backrun
+func (c *Client) handleBundleNotification(params interface{}) error {
 	paramsMap, ok := params.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("invalid mempool subscription params")
+		return fmt.Errorf("invalid bundle notification params")
 	}
 
-	result, ok := paramsMap["result"].(map[string]interface{})
+	// Extract transactions from bundle
+	txs, ok := paramsMap["txs"].([]interface{})
 	if !ok {
-		return fmt.Errorf("invalid mempool subscription result")
+		return fmt.Errorf("bundle notification missing txs field")
 	}
 
-	// Extract transaction data
-	data, ok := result["data"].([]interface{})
-	if !ok {
-		return nil // No transactions
+	if len(txs) != 2 {
+		log.Warn("Bundle notification should contain exactly 2 transactions", "count", len(txs))
 	}
 
-	for _, txData := range data {
+	// Process each transaction in the bundle
+	for i, txData := range txs {
 		txHex, ok := txData.(string)
 		if !ok {
+			log.Error("Invalid transaction format in bundle", "index", i)
 			continue
 		}
 
@@ -358,34 +375,45 @@ func (c *Client) handleMempoolSubscription(params interface{}) error {
 
 		txBytes, err := hex.DecodeString(txHex)
 		if err != nil {
-			log.Error("Failed to decode transaction hex", "error", err)
+			log.Error("Failed to decode transaction hex", "error", err, "index", i)
 			continue
 		}
 
 		select {
 		case c.txChan <- txBytes:
-			log.Info("Received transaction from gateway", "bytes", len(txBytes))
+			log.Info("Received bundle transaction from gateway", "index", i, "bytes", len(txBytes))
 		default:
-			log.Warn("Transaction channel full, dropping transaction from gateway")
+			log.Warn("Transaction channel full, dropping bundle transaction from gateway", "index", i)
 		}
 	}
 
 	return nil
 }
 
-// handleRefreshChallenge handles in-band token refresh
-func (c *Client) handleRefreshChallenge(params interface{}) error {
+// handleAuthExpiring handles token expiry warning notifications
+func (c *Client) handleAuthExpiring(params interface{}) error {
 	paramsMap, ok := params.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("invalid refresh challenge params")
+		return fmt.Errorf("invalid auth expiring params")
 	}
 
-	challenge, ok := paramsMap["challenge"].(string)
-	if !ok {
-		return fmt.Errorf("missing challenge in refresh")
+	// Extract expires_at timestamp if provided
+	expiresAt, _ := paramsMap["expires_at"].(string)
+	challenge, hasChallenge := paramsMap["challenge"].(string)
+
+	if expiresAt != "" {
+		log.Warn("Token expiring soon", "expires_at", expiresAt)
+	} else {
+		log.Warn("Token expiring soon (no expiry timestamp provided)")
 	}
 
-	log.Info("Received in-band refresh challenge")
+	// If gateway provides a challenge, perform proactive in-band refresh
+	if !hasChallenge {
+		log.Debug("No challenge provided in auth expiring notification, skipping proactive refresh")
+		return nil
+	}
+
+	log.Info("Performing proactive token refresh")
 
 	// Create refresh PoP with session nonce
 	popSignature, err := auth.CreateRefreshPoP(challenge, c.creds.RefreshToken, c.creds.SessionNonce, c.creds.SidecarKey)
@@ -424,9 +452,44 @@ func (c *Client) handleRefreshChallenge(params interface{}) error {
 	return nil
 }
 
+// handleRateLimited handles rate limiting backpressure signals from gateway
+func (c *Client) handleRateLimited(params interface{}) error {
+	paramsMap, ok := params.(map[string]interface{})
+	if !ok {
+		log.Warn("Rate limited notification received (invalid params format)")
+		return nil
+	}
+
+	// Extract rate limit details
+	retryAfter, _ := paramsMap["retry_after_ms"].(float64)
+	reason, _ := paramsMap["reason"].(string)
+	limit, _ := paramsMap["limit"].(float64)
+
+	if reason != "" {
+		log.Warn("Gateway rate limit signal received",
+			"reason", reason,
+			"retry_after_ms", retryAfter,
+			"limit", limit)
+	} else {
+		log.Warn("Gateway rate limit signal received",
+			"retry_after_ms", retryAfter)
+	}
+
+	// TODO: Implement backoff strategy
+	// For now, just log the warning. In the future, could:
+	// 1. Pause transaction publishing for retry_after_ms duration
+	// 2. Implement exponential backoff
+	// 3. Notify orchestrator to slow down processing
+
+	return nil
+}
+
 // startHeartbeat sends periodic heartbeats
 func (c *Client) startHeartbeat() {
 	interval := 30 * time.Second // Default heartbeat interval
+	if c.creds != nil && c.creds.HeartbeatInterval > 0 {
+		interval = c.creds.HeartbeatInterval
+	}
 
 	c.heartbeatTicker = time.NewTicker(interval)
 	go func() {

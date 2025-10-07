@@ -77,4 +77,8 @@ type Credentials struct {
 	RefreshToken       string
 	TokenExpiry        time.Time
 	SessionNonce       string // From validator_register response
+	WssURL             string
+	WsSubprotocol      string
+	HeartbeatInterval  time.Duration
+	MaxInflight        int
 }
