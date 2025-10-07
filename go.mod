@@ -7,8 +7,10 @@ toolchain go1.23.9
 require (
 	github.com/ethereum/go-ethereum v1.15.11
 	github.com/gorilla/websocket v1.5.3
+	github.com/gowebpki/jcs v1.0.1
 	golang.org/x/crypto v0.38.0
 	golang.org/x/term v0.32.0
+	lukechampine.com/blake3 v1.4.1
 )
 
 require (
@@ -21,6 +23,7 @@ require (
 	github.com/ethereum/c-kzg-4844/v2 v2.1.0 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
+	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/supranational/blst v0.3.14 // indirect
 	golang.org/x/sync v0.14.0 // indirect
