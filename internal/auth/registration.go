@@ -75,7 +75,10 @@ func (rc *RegistrationClient) GetChallenge(ctx context.Context) (*ChallengeRespo
 	if len(challengePreview) > 16 {
 		challengePreview = challengePreview[:16] + "..."
 	}
-	log.Debug("Got challenge from gateway", "challenge", challengePreview)
+	log.Debug("Got challenge from gateway",
+		"challenge", challengePreview,
+		"gateway_id", challengeResp.GatewayID,
+		"chain_id", challengeResp.ChainID)
 	return &challengeResp, nil
 }
 
@@ -138,6 +141,8 @@ func (rc *RegistrationClient) Register(ctx context.Context, creds *Credentials) 
 		"challenge_len", len(registerReq.Challenge),
 		"sidecar_pubkey", registerReq.SidecarPubkey,
 		"validator_pubkey", registerReq.DelegationEnvelope.Delegation.ValidatorPubkey,
+		"delegation_gateway_id", registerReq.DelegationEnvelope.Delegation.GatewayID,
+		"delegation_chain_id", registerReq.DelegationEnvelope.Delegation.ChainID,
 		"delegation_signature_len", len(registerReq.DelegationEnvelope.Signature),
 		"pop_signature_len", len(registerReq.PopSignature),
 		"body_size", len(reqBody))
