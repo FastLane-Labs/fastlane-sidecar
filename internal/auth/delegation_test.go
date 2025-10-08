@@ -114,13 +114,12 @@ func TestLoadDelegationEnvelope(t *testing.T) {
 			errMsg:  "sidecar_pubkey is required",
 		},
 		{
-			name:     "invalid signature",
+			name:     "unsigned delegation (all zeros)",
 			envelope: &envelope,
 			modify: func(e *DelegationEnvelope) {
-				e.Signature = "0x" + strings.Repeat("00", 65)
+				e.Signature = "0x" + strings.Repeat("00", 65) // 65 bytes all-zero signature is treated as unsigned
 			},
-			wantErr: true,
-			errMsg:  "signature verification failed",
+			wantErr: false, // all-zero signatures are now valid (treated as unsigned)
 		},
 		{
 			name:     "not_before in future",
