@@ -56,7 +56,7 @@ var (
 
 	networks = map[string]NetworkConfig{
 		"testnet":   {ChainID: "10143", GatewayID: "monad-testnet"},
-		"testnet-2": {ChainID: "30143", GatewayID: "monad-testnet-2"},
+		"testnet-2": {ChainID: "10143", GatewayID: "monad-testnet"}, // only for generate envelope
 		"mainnet":   {ChainID: "143", GatewayID: "mainnet"},
 	}
 )

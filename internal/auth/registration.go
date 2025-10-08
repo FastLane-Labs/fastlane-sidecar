@@ -65,6 +65,9 @@ func (rc *RegistrationClient) GetChallenge(ctx context.Context) (*ChallengeRespo
 		return nil, fmt.Errorf("challenge request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Log raw challenge response for debugging
+	log.Debug("Raw challenge response", "body", string(body))
+
 	var challengeResp ChallengeResponse
 	if err := json.Unmarshal(body, &challengeResp); err != nil {
 		return nil, fmt.Errorf("failed to parse challenge response: %w", err)
