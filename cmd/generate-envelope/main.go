@@ -53,8 +53,9 @@ var (
 	defaultScopes = []string{"tx_publish", "auth_refresh_inband", "inclusions_report"}
 
 	networks = map[string]NetworkConfig{
-		"testnet": {ChainID: "10143", GatewayID: "monad-testnet"},
-		"mainnet": {ChainID: "143", GatewayID: "mainnet"},
+		"testnet":   {ChainID: "10143", GatewayID: "monad-testnet"},
+		"testnet-2": {ChainID: "30143", GatewayID: "monad-testnet-2"},
+		"mainnet":   {ChainID: "143", GatewayID: "mainnet"},
 	}
 )
 
