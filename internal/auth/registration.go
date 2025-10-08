@@ -126,6 +126,8 @@ func (rc *RegistrationClient) Register(ctx context.Context, creds *Credentials) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	log.Debug("Sending registration request", "method", req.Method, "url", url)
+
 	resp, err := rc.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send register request: %w", err)
@@ -136,6 +138,8 @@ func (rc *RegistrationClient) Register(ctx context.Context, creds *Credentials) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read register response: %w", err)
 	}
+
+	log.Debug("Received registration response", "status_code", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("registration failed with status %d: %s", resp.StatusCode, string(body))

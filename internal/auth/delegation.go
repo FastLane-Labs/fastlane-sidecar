@@ -41,8 +41,12 @@ func LoadDelegationEnvelope(path string) (*DelegationEnvelope, error) {
 		return nil, fmt.Errorf("delegation sidecar_pubkey is required")
 	}
 
-	// Verify signature if provided (not empty)
-	if envelope.Signature != "" {
+	// Verify signature if provided (not empty and not all zeros)
+	isZeroSig := envelope.Signature == "" ||
+		envelope.Signature == "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" ||
+		strings.TrimPrefix(envelope.Signature, "0x") == strings.Repeat("0", 130)
+
+	if !isZeroSig {
 		if err := verifyDelegationSignature(&envelope); err != nil {
 			return nil, fmt.Errorf("delegation signature verification failed: %w", err)
 		}

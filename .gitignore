@@ -48,6 +48,7 @@ go.work
 /dist/
 /tmp/
 /temp/
+/bin/
 
 # Debug files
 debug
