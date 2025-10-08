@@ -71,7 +71,7 @@ func NewConfig() *Config {
 
 	// Load password in order of preference:
 	// 1. From password file (most secure for production)
-	// 2. From SIDECAR_PASSWORD environment variable
+	// 2. From SIDECAR_KEYSTORE_PASSWORD environment variable
 	// 3. Empty (will fail if credentials are needed)
 	if conf.PasswordFilePath != "" {
 		passwordBytes, err := os.ReadFile(conf.PasswordFilePath)
@@ -81,12 +81,8 @@ func NewConfig() *Config {
 		}
 		// Trim whitespace/newlines from password file
 		conf.KeystorePass = strings.TrimSpace(string(passwordBytes))
-		fmt.Fprintf(os.Stderr, "Loaded password from file: %s (length: %d)\n", conf.PasswordFilePath, len(conf.KeystorePass))
-	} else if envPass := os.Getenv("SIDECAR_PASSWORD"); envPass != "" {
+	} else if envPass := os.Getenv("SIDECAR_KEYSTORE_PASSWORD"); envPass != "" {
 		conf.KeystorePass = envPass
-		fmt.Fprintf(os.Stderr, "Loaded password from SIDECAR_PASSWORD env var (length: %d)\n", len(conf.KeystorePass))
-	} else {
-		fmt.Fprintf(os.Stderr, "WARNING: No password configured (no --password-file and no SIDECAR_PASSWORD env var)\n")
 	}
 
 	conf.PoolMaxDuration = time.Duration(poolMaxDurationMs) * time.Millisecond
