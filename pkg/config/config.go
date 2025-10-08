@@ -81,8 +81,12 @@ func NewConfig() *Config {
 		}
 		// Trim whitespace/newlines from password file
 		conf.KeystorePass = strings.TrimSpace(string(passwordBytes))
+		fmt.Fprintf(os.Stderr, "Loaded password from file: %s (length: %d)\n", conf.PasswordFilePath, len(conf.KeystorePass))
 	} else if envPass := os.Getenv("SIDECAR_PASSWORD"); envPass != "" {
 		conf.KeystorePass = envPass
+		fmt.Fprintf(os.Stderr, "Loaded password from SIDECAR_PASSWORD env var (length: %d)\n", len(conf.KeystorePass))
+	} else {
+		fmt.Fprintf(os.Stderr, "WARNING: No password configured (no --password-file and no SIDECAR_PASSWORD env var)\n")
 	}
 
 	conf.PoolMaxDuration = time.Duration(poolMaxDurationMs) * time.Millisecond
