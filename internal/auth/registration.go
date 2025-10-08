@@ -132,6 +132,16 @@ func (rc *RegistrationClient) Register(ctx context.Context, creds *Credentials) 
 
 	// Step 7: POST register
 	url := rc.gatewayURL + "/v1/sidecars/register"
+
+	// Log request details for debugging
+	log.Debug("Registration request details",
+		"challenge_len", len(registerReq.Challenge),
+		"sidecar_pubkey", registerReq.SidecarPubkey,
+		"validator_pubkey", registerReq.DelegationEnvelope.Delegation.ValidatorPubkey,
+		"delegation_signature_len", len(registerReq.DelegationEnvelope.Signature),
+		"pop_signature_len", len(registerReq.PopSignature),
+		"body_size", len(reqBody))
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create register request: %w", err)
