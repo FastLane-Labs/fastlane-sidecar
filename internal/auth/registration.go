@@ -25,6 +25,18 @@ func NewRegistrationClient(gatewayURL string) *RegistrationClient {
 		gatewayURL: gatewayURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Preserve the original HTTP method on redirects
+				// By default, Go converts POST to GET on 301/302 redirects
+				if len(via) > 0 {
+					req.Method = via[0].Method
+				}
+				// Allow up to 10 redirects
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				return nil
+			},
 		},
 	}
 }
