@@ -16,7 +16,9 @@ import (
 
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/keystore"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gowebpki/jcs"
 	"golang.org/x/term"
+	"lukechampine.com/blake3"
 )
 
 const (
@@ -369,13 +371,30 @@ func signDelegation(delegation Delegation, key *ecdsa.PrivateKey) (string, error
 		return "", nil
 	}
 
+	// Marshal delegation to JSON
 	delegationJSON, err := json.Marshal(delegation)
 	if err != nil {
 		return "", fmt.Errorf("marshal delegation: %w", err)
 	}
 
-	hash := crypto.Keccak256Hash(delegationJSON)
-	sig, err := crypto.Sign(hash.Bytes(), key)
+	// Canonicalize using JCS (RFC 8785)
+	canonical, err := jcs.Transform(delegationJSON)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize delegation: %w", err)
+	}
+
+	// Compute hash: BLAKE3("fastlane/delegation/v1" || JCS(delegation))
+	hasher := blake3.New(32, nil)
+	if _, err := hasher.Write([]byte("fastlane/delegation/v1")); err != nil {
+		return "", fmt.Errorf("hash domain: %w", err)
+	}
+	if _, err := hasher.Write(canonical); err != nil {
+		return "", fmt.Errorf("hash canonical: %w", err)
+	}
+	delegationHash := hasher.Sum(nil)
+
+	// Sign the hash
+	sig, err := crypto.Sign(delegationHash, key)
 	if err != nil {
 		return "", fmt.Errorf("sign: %w", err)
 	}
