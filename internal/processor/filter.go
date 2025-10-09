@@ -3,26 +3,26 @@ package processor
 import (
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
 )
 
 const (
-	// Method signatures for Fastlane contract
-	// TODO: Update these with actual method signatures from the deployed contract
-	TOBMethodSig     = "0x00000000"
-	BackrunMethodSig = "0x00000000"
+	// FlashExecutionBid method signature: flashExecutionBid(uint256,bytes32[],uint256,bool,bool,address,bytes)
+	FlashExecutionBidSig = "0x0c7abd22"
 )
 
 type Filter struct {
 	blacklistedAddresses map[common.Address]bool
 	minGasPrice          uint64
 	fastlaneContract     common.Address
-	tobMethodSig         [4]byte
-	backrunMethodSig     [4]byte
+	flashBidMethodSig    [4]byte
+	flashBidABI          abi.ABI
 }
 
 func NewFilter(fastlaneContractHex string) (*Filter, error) {
@@ -38,19 +38,35 @@ func NewFilter(fastlaneContractHex string) (*Filter, error) {
 	// Parse fastlane contract address
 	f.fastlaneContract = common.HexToAddress(fastlaneContractHex)
 
-	// Parse TOB method signature from constant
-	tobBytes := common.FromHex(TOBMethodSig)
-	if len(tobBytes) < 4 {
-		return nil, fmt.Errorf("TOB method signature too short: %s", TOBMethodSig)
+	// Parse flashExecutionBid method signature
+	flashBidBytes := common.FromHex(FlashExecutionBidSig)
+	if len(flashBidBytes) < 4 {
+		return nil, fmt.Errorf("flashExecutionBid method signature too short: %s", FlashExecutionBidSig)
 	}
-	copy(f.tobMethodSig[:], tobBytes[:4])
+	copy(f.flashBidMethodSig[:], flashBidBytes[:4])
 
-	// Parse backrun method signature from constant
-	backrunBytes := common.FromHex(BackrunMethodSig)
-	if len(backrunBytes) < 4 {
-		return nil, fmt.Errorf("backrun method signature too short: %s", BackrunMethodSig)
+	// Create ABI for parsing flashExecutionBid
+	// flashExecutionBid(uint256 bidAmount, bytes32[] txHashes, uint256 targetBlockNumber,
+	//                   bool executeOnLoss, bool payBidOnFail, address searcherToAddress, bytes searcherCallData)
+	abiJSON := `[{
+		"name": "flashExecutionBid",
+		"type": "function",
+		"inputs": [
+			{"name": "bidAmount", "type": "uint256"},
+			{"name": "txHashes", "type": "bytes32[]"},
+			{"name": "targetBlockNumber", "type": "uint256"},
+			{"name": "executeOnLoss", "type": "bool"},
+			{"name": "payBidOnFail", "type": "bool"},
+			{"name": "searcherToAddress", "type": "address"},
+			{"name": "searcherCallData", "type": "bytes"}
+		]
+	}]`
+
+	parsedABI, err := abi.JSON(strings.NewReader(abiJSON))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse flashExecutionBid ABI: %w", err)
 	}
-	copy(f.backrunMethodSig[:], backrunBytes[:4])
+	f.flashBidABI = parsedABI
 
 	return f, nil
 }
@@ -78,15 +94,8 @@ func (f *Filter) ClassifyTransaction(tx *ethTypes.Transaction) (types.Transactio
 		if len(tx.Data()) >= 4 {
 			methodSig := [4]byte{tx.Data()[0], tx.Data()[1], tx.Data()[2], tx.Data()[3]}
 
-			if methodSig == f.tobMethodSig {
-				bidAmount := f.extractBidAmountFromTOBData(tx.Data())
-				return types.TOBBid, &types.BidData{BidAmount: bidAmount}
-			} else if methodSig == f.backrunMethodSig {
-				bidAmount, targetTxHash := f.extractBidDataFromBackrunData(tx.Data())
-				return types.BackrunBid, &types.BidData{
-					BidAmount:    bidAmount,
-					TargetTxHash: &targetTxHash,
-				}
+			if methodSig == f.flashBidMethodSig {
+				return f.classifyFlashExecutionBid(tx.Data())
 			}
 		}
 	}
@@ -94,37 +103,63 @@ func (f *Filter) ClassifyTransaction(tx *ethTypes.Transaction) (types.Transactio
 	return types.NormalTransaction, nil
 }
 
-// extractBidAmountFromTOBData extracts bid amount from TOB transaction calldata
-// Expected calldata format: 4 bytes (method sig) + 32 bytes (uint256 bid)
-func (f *Filter) extractBidAmountFromTOBData(data []byte) *big.Int {
-	// Need at least 4 bytes (method sig) + 32 bytes (uint256)
-	if len(data) < 36 {
-		log.Error("TOB calldata too short", "length", len(data))
-		return big.NewInt(0)
+// classifyFlashExecutionBid parses flashExecutionBid calldata and classifies as TOB or Backrun
+func (f *Filter) classifyFlashExecutionBid(data []byte) (types.TransactionType, *types.BidData) {
+	if len(data) < 4 {
+		log.Error("flashExecutionBid calldata too short", "length", len(data))
+		return types.NormalTransaction, nil
 	}
 
-	// Skip first 4 bytes (method signature), read next 32 bytes as uint256
-	bidAmount := new(big.Int).SetBytes(data[4:36])
-	return bidAmount
-}
-
-// extractBidDataFromBackrunData extracts bid amount and target tx hash from backrun transaction calldata
-// Expected calldata format: 4 bytes (method sig) + 32 bytes (bytes32 targetHash) + 32 bytes (uint256 bid)
-func (f *Filter) extractBidDataFromBackrunData(data []byte) (*big.Int, common.Hash) {
-	// Need at least 4 bytes (method sig) + 32 bytes (hash) + 32 bytes (uint256)
-	if len(data) < 68 {
-		log.Error("Backrun calldata too short", "length", len(data))
-		return big.NewInt(0), common.Hash{}
+	// Decode the method arguments
+	method := f.flashBidABI.Methods["flashExecutionBid"]
+	args, err := method.Inputs.Unpack(data[4:])
+	if err != nil {
+		log.Error("Failed to decode flashExecutionBid calldata", "error", err)
+		return types.NormalTransaction, nil
 	}
 
-	// Skip first 4 bytes (method signature)
-	// Read next 32 bytes as target tx hash
-	targetHash := common.BytesToHash(data[4:36])
+	if len(args) < 2 {
+		log.Error("flashExecutionBid has insufficient arguments", "count", len(args))
+		return types.NormalTransaction, nil
+	}
 
-	// Read next 32 bytes as bid amount (uint256)
-	bidAmount := new(big.Int).SetBytes(data[36:68])
+	// Extract bidAmount (first argument)
+	bidAmount, ok := args[0].(*big.Int)
+	if !ok {
+		log.Error("Failed to parse bidAmount from flashExecutionBid")
+		return types.NormalTransaction, nil
+	}
 
-	return bidAmount, targetHash
+	// Extract txHashes (second argument)
+	txHashes, ok := args[1].([][32]byte)
+	if !ok {
+		log.Error("Failed to parse txHashes from flashExecutionBid")
+		return types.NormalTransaction, nil
+	}
+
+	// Classify based on txHashes length
+	switch len(txHashes) {
+	case 0:
+		// TOB bid (no target transactions)
+		return types.TOBBid, &types.BidData{
+			BidAmount: bidAmount,
+		}
+
+	case 1:
+		// Backrun bid (single target transaction)
+		targetHash := common.BytesToHash(txHashes[0][:])
+		return types.BackrunBid, &types.BidData{
+			BidAmount:    bidAmount,
+			TargetTxHash: &targetHash,
+		}
+
+	default:
+		// Multiple targets not supported yet
+		log.Warn("flashExecutionBid with multiple targets not supported yet",
+			"target_count", len(txHashes),
+			"bid_amount", bidAmount.String())
+		return types.NormalTransaction, nil
+	}
 }
 
 func (f *Filter) AddBlacklistedAddress(addr common.Address) {
@@ -137,24 +172,4 @@ func (f *Filter) SetMinGasPrice(price uint64) {
 
 func (f *Filter) SetFastlaneContract(addr common.Address) {
 	f.fastlaneContract = addr
-}
-
-func (f *Filter) SetTOBMethodSignature(sig [4]byte) {
-	f.tobMethodSig = sig
-}
-
-func (f *Filter) SetBackrunMethodSignature(sig [4]byte) {
-	f.backrunMethodSig = sig
-}
-
-// SetMethodSignatures sets both method signatures from hex strings (for testing)
-func (f *Filter) SetMethodSignatures(tobSigHex, backrunSigHex string) {
-	tobBytes := common.FromHex(tobSigHex)
-	if len(tobBytes) >= 4 {
-		copy(f.tobMethodSig[:], tobBytes[:4])
-	}
-	backrunBytes := common.FromHex(backrunSigHex)
-	if len(backrunBytes) >= 4 {
-		copy(f.backrunMethodSig[:], backrunBytes[:4])
-	}
 }
