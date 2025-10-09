@@ -25,6 +25,18 @@ func NewRegistrationClient(gatewayURL string) *RegistrationClient {
 		gatewayURL: gatewayURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Preserve the original HTTP method on redirects
+				// By default, Go converts POST to GET on 301/302 redirects
+				if len(via) > 0 {
+					req.Method = via[0].Method
+				}
+				// Allow up to 10 redirects
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				return nil
+			},
 		},
 	}
 }
@@ -53,6 +65,9 @@ func (rc *RegistrationClient) GetChallenge(ctx context.Context) (*ChallengeRespo
 		return nil, fmt.Errorf("challenge request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Log raw challenge response for debugging
+	log.Debug("Raw challenge response", "body", string(body))
+
 	var challengeResp ChallengeResponse
 	if err := json.Unmarshal(body, &challengeResp); err != nil {
 		return nil, fmt.Errorf("failed to parse challenge response: %w", err)
@@ -63,7 +78,10 @@ func (rc *RegistrationClient) GetChallenge(ctx context.Context) (*ChallengeRespo
 	if len(challengePreview) > 16 {
 		challengePreview = challengePreview[:16] + "..."
 	}
-	log.Debug("Got challenge from gateway", "challenge", challengePreview)
+	log.Debug("Got challenge from gateway",
+		"challenge", challengePreview,
+		"gateway_id", challengeResp.GatewayID,
+		"chain_id", challengeResp.ChainID)
 	return &challengeResp, nil
 }
 
@@ -120,11 +138,25 @@ func (rc *RegistrationClient) Register(ctx context.Context, creds *Credentials) 
 
 	// Step 7: POST register
 	url := rc.gatewayURL + "/v1/sidecars/register"
+
+	// Log request details for debugging
+	log.Debug("Registration request details",
+		"challenge_len", len(registerReq.Challenge),
+		"sidecar_pubkey", registerReq.SidecarPubkey,
+		"validator_pubkey", registerReq.DelegationEnvelope.Delegation.ValidatorPubkey,
+		"delegation_gateway_id", registerReq.DelegationEnvelope.Delegation.GatewayID,
+		"delegation_chain_id", registerReq.DelegationEnvelope.Delegation.ChainID,
+		"delegation_signature_len", len(registerReq.DelegationEnvelope.Signature),
+		"pop_signature_len", len(registerReq.PopSignature),
+		"body_size", len(reqBody))
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create register request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	log.Debug("Sending registration request", "method", req.Method, "url", url)
 
 	resp, err := rc.httpClient.Do(req)
 	if err != nil {
@@ -136,6 +168,8 @@ func (rc *RegistrationClient) Register(ctx context.Context, creds *Credentials) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read register response: %w", err)
 	}
+
+	log.Debug("Received registration response", "status_code", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("registration failed with status %d: %s", resp.StatusCode, string(body))

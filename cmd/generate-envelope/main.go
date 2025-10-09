@@ -2,20 +2,23 @@ package main
 
 import (
 	"crypto/ecdsa"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/keystore"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gowebpki/jcs"
 	"golang.org/x/term"
+	"lukechampine.com/blake3"
 )
 
 const (
@@ -52,8 +55,9 @@ var (
 	defaultScopes = []string{"tx_publish", "auth_refresh_inband", "inclusions_report"}
 
 	networks = map[string]NetworkConfig{
-		"testnet": {ChainID: "10143", GatewayID: "monad-testnet"},
-		"mainnet": {ChainID: "143", GatewayID: "mainnet"},
+		"testnet":   {ChainID: "10143", GatewayID: "monad-testnet"},
+		"testnet-2": {ChainID: "10143", GatewayID: "monad-testnet"}, // only for generate envelope
+		"mainnet":   {ChainID: "143", GatewayID: "mainnet"},
 	}
 )
 
@@ -132,53 +136,70 @@ func run(homeDir, network, validatorPubkey, validatorKeystore, validatorPassword
 	signed := validatorKey != nil
 	log.Printf("✓ Validator public key: %s\n", validatorPubStr)
 
-	// Generate sidecar keypair
-	sidecarKey, err := crypto.GenerateKey()
-	if err != nil {
-		return fmt.Errorf("failed to generate sidecar key: %w", err)
-	}
-	sidecarPubStr := "0x" + hex.EncodeToString(crypto.CompressPubkey(&sidecarKey.PublicKey))
-	log.Printf("✓ Sidecar public key: %s\n", sidecarPubStr)
-
-	// Check if sidecar keystore already exists
-	if _, err := os.Stat(keystorePath); err == nil {
-		// Keystore exists - warn about overwriting
-		fmt.Println()
-		log.Println("⚠️  WARNING: Sidecar keystore already exists!")
-		fmt.Printf("    Location: %s\n", keystorePath)
-		fmt.Println()
-		fmt.Println("Continuing will:")
-		fmt.Println("  1. Generate a NEW sidecar keypair (different public key)")
-		fmt.Println("  2. OVERWRITE the existing keystore file")
-		fmt.Println("  3. Require MANUAL APPROVAL from FastLane again")
-		fmt.Println()
-		fmt.Print("Do you want to continue? [y/N]: ")
-
-		var response string
-		fmt.Scanln(&response)
-		response = strings.ToLower(strings.TrimSpace(response))
-
-		if response != "y" && response != "yes" {
-			return fmt.Errorf("operation cancelled by user")
-		}
-		fmt.Println()
-	}
-
 	// Validate sidecar password is provided
 	if sidecarPassword == "" {
 		return fmt.Errorf("--sidecar-password is required")
 	}
 
-	// Create encrypted sidecar keystore
-	sidecarKS, err := keystore.EncryptKey(crypto.FromECDSA(sidecarKey), sidecarPassword)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt sidecar key: %w", err)
-	}
+	var sidecarPubStr string
 
-	if err := keystore.SaveKeystore(sidecarKS, keystorePath); err != nil {
-		return fmt.Errorf("failed to save sidecar keystore: %w", err)
+	// Check if sidecar keystore already exists
+	if _, err := os.Stat(keystorePath); err == nil {
+		// Keystore exists - load it and derive the public key
+		log.Printf("Loading existing sidecar keystore: %s\n", keystorePath)
+
+		ks, err := keystore.LoadKeystore(keystorePath)
+		if err != nil {
+			return fmt.Errorf("failed to load existing keystore: %w", err)
+		}
+
+		sidecarPrivKeyBytes, err := keystore.DecryptKey(ks, sidecarPassword)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt existing keystore (wrong password?): %w", err)
+		}
+
+		sidecarKey, err := crypto.ToECDSA(sidecarPrivKeyBytes)
+		if err != nil {
+			return fmt.Errorf("failed to convert existing key to ECDSA: %w", err)
+		}
+
+		sidecarPubStr = "0x" + hex.EncodeToString(crypto.CompressPubkey(&sidecarKey.PublicKey))
+		log.Printf("✓ Sidecar public key (from existing keystore): %s\n", sidecarPubStr)
+	} else {
+		// Keystore doesn't exist - generate new IKM and create keystore
+		log.Printf("Generating new sidecar keystore: %s\n", keystorePath)
+
+		// Generate random IKM (Input Keying Material) for sidecar key
+		ikm := make([]byte, 32)
+		if _, err := io.ReadFull(rand.Reader, ikm); err != nil {
+			return fmt.Errorf("failed to generate IKM: %w", err)
+		}
+
+		// Derive the sidecar private key from IKM (same as DecryptKey does)
+		sidecarPrivKeyBytes, err := keystore.DeriveSecp256k1Key(ikm)
+		if err != nil {
+			return fmt.Errorf("failed to derive sidecar key from IKM: %w", err)
+		}
+
+		sidecarKey, err := crypto.ToECDSA(sidecarPrivKeyBytes)
+		if err != nil {
+			return fmt.Errorf("failed to convert to ECDSA key: %w", err)
+		}
+
+		sidecarPubStr = "0x" + hex.EncodeToString(crypto.CompressPubkey(&sidecarKey.PublicKey))
+		log.Printf("✓ Sidecar public key (newly generated): %s\n", sidecarPubStr)
+
+		// Create encrypted sidecar keystore - encrypt the IKM, not the derived private key
+		sidecarKS, err := keystore.EncryptKey(ikm, sidecarPassword)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt sidecar key: %w", err)
+		}
+
+		if err := keystore.SaveKeystore(sidecarKS, keystorePath); err != nil {
+			return fmt.Errorf("failed to save sidecar keystore: %w", err)
+		}
+		log.Printf("✓ Sidecar keystore saved: %s\n", keystorePath)
 	}
-	log.Printf("✓ Sidecar keystore: %s\n", keystorePath)
 
 	// Create delegation envelope
 	delegation := Delegation{
@@ -343,20 +364,37 @@ func hasHexPrefix(str string) bool {
 	return len(str) >= 2 && str[0] == '0' && (str[1] == 'x' || str[1] == 'X')
 }
 
-// signDelegation signs the delegation if a private key is provided, otherwise returns unsigned signature
+// signDelegation signs the delegation if a private key is provided, otherwise returns empty signature
 func signDelegation(delegation Delegation, key *ecdsa.PrivateKey) (string, error) {
 	if key == nil {
-		// Unsigned delegation (all zeros)
-		return "0x" + hex.EncodeToString(make([]byte, 65)), nil
+		// Unsigned delegation (empty for whitelisted validators)
+		return "", nil
 	}
 
+	// Marshal delegation to JSON
 	delegationJSON, err := json.Marshal(delegation)
 	if err != nil {
 		return "", fmt.Errorf("marshal delegation: %w", err)
 	}
 
-	hash := crypto.Keccak256Hash(delegationJSON)
-	sig, err := crypto.Sign(hash.Bytes(), key)
+	// Canonicalize using JCS (RFC 8785)
+	canonical, err := jcs.Transform(delegationJSON)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize delegation: %w", err)
+	}
+
+	// Compute hash: BLAKE3("fastlane/delegation/v1" || JCS(delegation))
+	hasher := blake3.New(32, nil)
+	if _, err := hasher.Write([]byte("fastlane/delegation/v1")); err != nil {
+		return "", fmt.Errorf("hash domain: %w", err)
+	}
+	if _, err := hasher.Write(canonical); err != nil {
+		return "", fmt.Errorf("hash canonical: %w", err)
+	}
+	delegationHash := hasher.Sum(nil)
+
+	// Sign the hash
+	sig, err := crypto.Sign(delegationHash, key)
 	if err != nil {
 		return "", fmt.Errorf("sign: %w", err)
 	}
