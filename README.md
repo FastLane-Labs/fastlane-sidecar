@@ -190,24 +190,29 @@ sudo journalctl -u fastlane-sidecar -n 100
 
 ## Configuration
 
-The sidecar can be configured for the Fastlane auction contract:
+The sidecar can be configured for different networks and parameters:
 
 ```bash
 fastlane-sidecar \
-  -fastlane-contract=0x1234567890123456789012345678901234567890 \
-  -tob-method-sig=0xaabbccdd \
-  -backrun-method-sig=0x11223344
+  -network=testnet-2 \
+  -log-level=info \
+  -gateway-url=https://gateway.example.com
 ```
 
 ### Configuration Flags
 
-- `-fastlane-contract` - Fastlane auction contract address (default: `0x0000000000000000000000000000000000000000`)
-- `-tob-method-sig` - TOB bid method signature (default: `0x00000000`)
-- `-backrun-method-sig` - Backrun bid method signature (default: `0x00000000`)
+- `-network` - Network name: testnet, testnet-2, mainnet (default: `testnet`)
+- `-fastlane-contract` - Override fastlane contract address (optional, uses network default if not set)
 - `-home` - Base path for Unix sockets (default: `/home/monad/fastlane/`)
-- `-gateway-url` - WebSocket URL for MEV gateway (default: `ws://localhost:8080`)
+- `-gateway-url` - HTTP URL for MEV gateway (default: `http://localhost:8080`)
 - `-log-level` - Log level: debug, info, warn, error (default: `debug`)
 - `-pool-max-duration-ms` - Max time to hold transactions in pool (default: `60000`)
+- `-auction-cycle-ms` - Auction cycle interval (default: `200`)
+- `-streaming-delay-ms` - Delay before streaming auction results (default: `100`)
+- `-delegation` - Delegation envelope JSON filename relative to home (default: `delegation-envelope.json`)
+- `-keystore` - Sidecar keystore filename relative to home (default: `sidecar-keystore.json`)
+- `-password-file` - Path to file containing keystore password (optional)
+- `-disable-gateway` - Disable gateway connection (default: `false`)
 
 ### Example systemd Configuration
 
@@ -219,9 +224,8 @@ sudo systemctl edit fastlane-sidecar
 ExecStart=
 ExecStart=/usr/bin/fastlane-sidecar \
   -log-level=info \
-  -fastlane-contract=0x1234567890123456789012345678901234567890 \
-  -tob-method-sig=0xaabbccdd \
-  -backrun-method-sig=0x11223344
+  -network=testnet-2 \
+  -gateway-url=https://gateway.example.com
 ```
 
 ## Security
