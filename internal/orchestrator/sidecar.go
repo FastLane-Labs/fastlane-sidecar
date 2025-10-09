@@ -3,12 +3,14 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/auth"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/gateway"
+	"github.com/FastLane-Labs/fastlane-sidecar/internal/health"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/ipc"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/pool"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/priorities"
@@ -38,6 +40,7 @@ type Sidecar struct {
 	gatewayClient *gateway.Client
 	txPool        *pool.TransactionPool
 	filter        *processor.Filter
+	healthServer  *health.Server
 
 	// Authentication
 	credentials *auth.Credentials // Loaded once in constructor, reused for registration
@@ -108,10 +111,30 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		cancel:        cancel,
 	}
 
+	// Create health server with adapter
+	adapter := &healthStatsAdapter{sidecar: s}
+	s.healthServer = health.NewServer(8765, adapter)
+
 	return s, nil
 }
 
+// healthStatsAdapter adapts Sidecar to health.StatsProvider interface
+type healthStatsAdapter struct {
+	sidecar *Sidecar
+}
+
+func (a *healthStatsAdapter) GetHealthStats() health.Stats {
+	return a.sidecar.GetHealthStatsForServer()
+}
+
 func (s *Sidecar) Start() error {
+	// Start health server in background
+	go func() {
+		if err := s.healthServer.Start(); err != nil && err != http.ErrServerClosed {
+			log.Error("Health server failed", "error", err)
+		}
+	}()
+
 	// Start node listener
 	if err := s.nodeListener.Start(); err != nil {
 		return err
@@ -213,7 +236,7 @@ func (s *Sidecar) registerWithGateway() error {
 	return nil
 }
 
-// GetHealthStats returns current health statistics for the sidecar
+// GetHealthStats returns current health statistics for the sidecar (gateway format)
 func (s *Sidecar) GetHealthStats() gateway.HealthStats {
 	lastHeartbeatNanos := s.lastHeartbeat.Load()
 	var lastHeartbeat time.Time
@@ -222,6 +245,22 @@ func (s *Sidecar) GetHealthStats() gateway.HealthStats {
 	}
 
 	return gateway.HealthStats{
+		LastHeartbeat: lastHeartbeat,
+		TxReceived:    s.txReceived.Load(),
+		TxStreamed:    s.txStreamed.Load(),
+		PoolSize:      s.poolSize.Load(),
+	}
+}
+
+// GetHealthStatsForServer returns health statistics for the HTTP health server
+func (s *Sidecar) GetHealthStatsForServer() health.Stats {
+	lastHeartbeatNanos := s.lastHeartbeat.Load()
+	var lastHeartbeat time.Time
+	if lastHeartbeatNanos > 0 {
+		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
+	}
+
+	return health.Stats{
 		LastHeartbeat: lastHeartbeat,
 		TxReceived:    s.txReceived.Load(),
 		TxStreamed:    s.txStreamed.Load(),
