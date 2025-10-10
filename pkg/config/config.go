@@ -22,6 +22,13 @@ var FastlaneContractAddresses = map[string]string{
 	"mainnet":   "0x0000000000000000000000000000000000000000",
 }
 
+// GatewayURLs maps network names to their default gateway URLs
+var GatewayURLs = map[string]string{
+	"testnet":   "https://monad-testnet.mev-gateway.fastlane.xyz",
+	"testnet-2": "https://monad-testnet.mev-gateway.fastlane.xyz",
+	"mainnet":   "https://monad.mev-gateway.fastlane.xyz",
+}
+
 type Config struct {
 	LogLevel                string
 	HomePath                string
@@ -52,11 +59,12 @@ func NewConfig() *Config {
 	var auctionCycleMs int
 	var streamingDelayMs int
 	var contractOverride string
+	var gatewayURLOverride string
 
 	fs := flag.NewFlagSet("UserConfig", flag.ExitOnError)
 	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level")
 	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
-	fs.StringVar(&conf.GatewayURL, "gateway-url", "http://localhost:8080", "HTTP URL for MEV gateway (will be converted to WebSocket)")
+	fs.StringVar(&gatewayURLOverride, "gateway-url", "", "Override HTTP URL for MEV gateway (optional, uses network default if not set)")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 60000, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
 	fs.IntVar(&streamingDelayMs, "streaming-delay-ms", 100, "Delay before streaming auction results (ms)")
@@ -112,6 +120,20 @@ func NewConfig() *Config {
 			os.Exit(1)
 		}
 		conf.FastlaneContract = addr
+	}
+
+	// Set gateway URL based on network or override
+	if gatewayURLOverride != "" {
+		conf.GatewayURL = gatewayURLOverride
+	} else {
+		url, ok := GatewayURLs[conf.Network]
+		if !ok {
+			// If network not found in gateway URLs, use a default
+			// (network validation already happened above for contract addresses)
+			conf.GatewayURL = GatewayURLs["testnet"]
+		} else {
+			conf.GatewayURL = url
+		}
 	}
 
 	return &conf
