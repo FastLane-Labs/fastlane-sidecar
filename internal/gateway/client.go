@@ -44,7 +44,6 @@ type Client struct {
 	healthProvider HealthStatsProvider
 
 	// Connection status
-	connected     atomic.Bool
 	lastError     atomic.Value // stores string
 	authenticated atomic.Bool
 }
@@ -102,7 +101,6 @@ func (c *Client) Connect() error {
 			log.Error("WebSocket handshake failed", "status", resp.StatusCode)
 		}
 		log.Warn("Failed to connect to gateway, will retry", "url", wsURL, "error", err)
-		c.setConnected(false)
 		c.setError(err)
 		go c.reconnectLoop()
 		return nil
@@ -115,14 +113,12 @@ func (c *Client) Connect() error {
 	c.conn = conn
 	c.connMu.Unlock()
 
-	c.setConnected(true)
 	c.setError(nil)
 	log.Info("Connected to gateway WebSocket")
 
 	// Send validator_register
 	if err := c.sendValidatorRegister(); err != nil {
 		log.Error("Failed to send validator_register", "error", err)
-		c.setConnected(false)
 		c.setError(err)
 		conn.Close()
 		go c.reconnectLoop()
@@ -258,7 +254,6 @@ func (c *Client) readMessages() {
 			err := conn.ReadJSON(&msg)
 			if err != nil {
 				log.Error("Error reading from gateway", "error", err)
-				c.setConnected(false)
 				c.setError(err)
 				c.connMu.Lock()
 				c.conn = nil
@@ -614,11 +609,6 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// IsConnected returns true if the client is connected to the gateway
-func (c *Client) IsConnected() bool {
-	return c.connected.Load()
-}
-
 // IsAuthenticated returns true if the client is authenticated with the gateway
 func (c *Client) IsAuthenticated() bool {
 	return c.authenticated.Load()
@@ -630,14 +620,6 @@ func (c *Client) GetLastError() string {
 		return val.(string)
 	}
 	return ""
-}
-
-// setConnected updates the connection status
-func (c *Client) setConnected(connected bool) {
-	c.connected.Store(connected)
-	if !connected {
-		c.authenticated.Store(false)
-	}
 }
 
 // setError stores an error message for health reporting

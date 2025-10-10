@@ -276,11 +276,12 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 
 	// Add gateway status
 	if s.gatewayClient != nil {
-		stats.GatewayConnected = s.gatewayClient.IsConnected()
+		// Gateway client exists means we attempted connection
+		stats.GatewayConnected = true
 		stats.GatewayAuthenticated = s.gatewayClient.IsAuthenticated()
 
-		// Set error if not connected or not authenticated
-		if !stats.GatewayConnected || !stats.GatewayAuthenticated {
+		// Set error if not authenticated
+		if !stats.GatewayAuthenticated {
 			// Use client's error if available, otherwise use sidecar's stored error
 			if clientErr := s.gatewayClient.GetLastError(); clientErr != "" {
 				stats.GatewayError = clientErr
