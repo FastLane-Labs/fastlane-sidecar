@@ -43,7 +43,8 @@ type Sidecar struct {
 	healthServer  *health.Server
 
 	// Authentication
-	credentials *auth.Credentials // Loaded once in constructor, reused for registration
+	credentials  *auth.Credentials // Loaded once in constructor, reused for registration
+	gatewayError atomic.Value      // stores gateway error string
 
 	// Context for cancellation
 	ctx    context.Context
@@ -194,6 +195,8 @@ func (s *Sidecar) registerWithGateway() error {
 	// Perform registration using credentials loaded in constructor
 	registerResp, err := regClient.Register(s.ctx, s.credentials)
 	if err != nil {
+		// Store error in sidecar for health reporting
+		s.gatewayError.Store(fmt.Sprintf("registration failed: %v", err))
 		return fmt.Errorf("registration failed: %w", err)
 	}
 
@@ -230,8 +233,12 @@ func (s *Sidecar) registerWithGateway() error {
 
 	// Connect to gateway WebSocket
 	if err := s.gatewayClient.Connect(); err != nil {
+		s.gatewayError.Store(fmt.Sprintf("WebSocket connection failed: %v", err))
 		return fmt.Errorf("WebSocket connection failed: %w", err)
 	}
+
+	// Clear any previous errors on success
+	s.gatewayError.Store("")
 
 	return nil
 }
@@ -260,12 +267,52 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
 	}
 
-	return health.Stats{
+	stats := health.Stats{
 		LastHeartbeat: lastHeartbeat,
 		TxReceived:    s.txReceived.Load(),
 		TxStreamed:    s.txStreamed.Load(),
 		PoolSize:      s.poolSize.Load(),
 	}
+
+	// Add gateway status
+	if s.gatewayClient != nil {
+		// Gateway client exists means we attempted connection
+		stats.GatewayConnected = true
+		stats.GatewayAuthenticated = s.gatewayClient.IsAuthenticated()
+
+		// Set error if not authenticated
+		if !stats.GatewayAuthenticated {
+			// Use client's error if available, otherwise use sidecar's stored error
+			if clientErr := s.gatewayClient.GetLastError(); clientErr != "" {
+				stats.GatewayError = clientErr
+			} else if sidecarErr := s.getGatewayError(); sidecarErr != "" {
+				stats.GatewayError = sidecarErr
+			}
+		}
+	} else {
+		// Gateway client not created yet
+		stats.GatewayConnected = false
+		stats.GatewayAuthenticated = false
+
+		// Check if we have a stored error (e.g., registration failure)
+		if sidecarErr := s.getGatewayError(); sidecarErr != "" {
+			stats.GatewayError = sidecarErr
+		} else if s.config.DisableGateway {
+			stats.GatewayError = "gateway disabled"
+		} else {
+			stats.GatewayError = "gateway not initialized"
+		}
+	}
+
+	return stats
+}
+
+// getGatewayError returns the stored gateway error string
+func (s *Sidecar) getGatewayError() string {
+	if val := s.gatewayError.Load(); val != nil {
+		return val.(string)
+	}
+	return ""
 }
 
 // retryGatewayRegistration retries registration in the background with exponential backoff
@@ -353,7 +400,6 @@ func (s *Sidecar) processNodeTransactions() {
 			log.Info("Node transaction processing stopped")
 			return
 		case msgBytes := <-txChan:
-			s.txReceived.Add(1)
 			s.handleIncomingMessage(msgBytes, "node")
 		}
 	}
@@ -374,7 +420,6 @@ func (s *Sidecar) processGatewayTransactions() {
 			log.Info("Gateway transaction processing stopped")
 			return
 		case msgBytes := <-gatewayTxChan:
-			s.txReceived.Add(1)
 			s.handleIncomingMessage(msgBytes, "gateway")
 		}
 	}
@@ -388,6 +433,7 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 	switch msgType {
 	case "TxAdded":
 		log.Info("Received TxAdded message", "bytes", len(data), "source", source)
+		s.txReceived.Add(1) // Only count actual transactions, not heartbeats
 		s.handleIncomingTransaction(data, source)
 
 	case "TxDropped":
@@ -401,6 +447,7 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 	default:
 		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
 		// Fallback to old behavior for compatibility
+		s.txReceived.Add(1)
 		s.handleIncomingTransaction(msgBytes, source)
 	}
 }

@@ -83,7 +83,7 @@ func (nl *NodeListener) acceptConnections() {
 // handleNodeConnection handles a connection from the node
 func (nl *NodeListener) handleNodeConnection(conn net.Conn) {
 	defer conn.Close()
-	log.Info("Node connected", "remote", conn.RemoteAddr())
+	log.Info("Node connected", "socket", nl.socketPath)
 
 	msgCount := 0
 	for {
@@ -108,13 +108,13 @@ func (nl *NodeListener) handleNodeConnection(conn net.Conn) {
 			}
 
 			msgCount++
-			log.Info("Transaction received from node", "count", msgCount, "bytes", len(msgData))
+			log.Debug("Message received from node", "count", msgCount, "bytes", len(msgData))
 
 			// Send to processing channel (raw transaction bytes)
 			select {
 			case nl.txChan <- msgData:
 			default:
-				log.Error("Transaction channel full, dropping transaction", "count", msgCount)
+				log.Error("Message channel full, dropping message", "count", msgCount)
 			}
 		}
 	}

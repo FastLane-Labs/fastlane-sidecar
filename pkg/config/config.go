@@ -15,11 +15,10 @@ const (
 )
 
 // FastlaneContractAddresses maps network names to their fastlane contract addresses
-// TODO: Update these with actual deployed contract addresses
 var FastlaneContractAddresses = map[string]string{
-	"testnet":   "0x0000000000000000000000000000000000000000",
-	"testnet-2": "0x0000000000000000000000000000000000000000",
-	"mainnet":   "0x0000000000000000000000000000000000000000",
+	"testnet":   "0x0000000000000000000000000000000000000000", // TBD
+	"testnet-2": "0xf9436C4b1353D5B411AD5bb65B9826f34737BbC7", // flashExecutionBid contract
+	"mainnet":   "0x0000000000000000000000000000000000000000", // TBD
 }
 
 // GatewayURLs maps network names to their default gateway URLs
