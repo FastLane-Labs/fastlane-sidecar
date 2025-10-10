@@ -260,12 +260,20 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
 	}
 
-	return health.Stats{
+	stats := health.Stats{
 		LastHeartbeat: lastHeartbeat,
 		TxReceived:    s.txReceived.Load(),
 		TxStreamed:    s.txStreamed.Load(),
 		PoolSize:      s.poolSize.Load(),
 	}
+
+	// Add gateway status if gateway client exists
+	if s.gatewayClient != nil {
+		stats.GatewayConnected = s.gatewayClient.IsConnected()
+		stats.GatewayError = s.gatewayClient.GetLastError()
+	}
+
+	return stats
 }
 
 // retryGatewayRegistration retries registration in the background with exponential backoff
@@ -353,7 +361,6 @@ func (s *Sidecar) processNodeTransactions() {
 			log.Info("Node transaction processing stopped")
 			return
 		case msgBytes := <-txChan:
-			s.txReceived.Add(1)
 			s.handleIncomingMessage(msgBytes, "node")
 		}
 	}
@@ -374,7 +381,6 @@ func (s *Sidecar) processGatewayTransactions() {
 			log.Info("Gateway transaction processing stopped")
 			return
 		case msgBytes := <-gatewayTxChan:
-			s.txReceived.Add(1)
 			s.handleIncomingMessage(msgBytes, "gateway")
 		}
 	}
@@ -388,6 +394,7 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 	switch msgType {
 	case "TxAdded":
 		log.Info("Received TxAdded message", "bytes", len(data), "source", source)
+		s.txReceived.Add(1) // Only count actual transactions, not heartbeats
 		s.handleIncomingTransaction(data, source)
 
 	case "TxDropped":
@@ -401,6 +408,7 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 	default:
 		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
 		// Fallback to old behavior for compatibility
+		s.txReceived.Add(1)
 		s.handleIncomingTransaction(msgBytes, source)
 	}
 }

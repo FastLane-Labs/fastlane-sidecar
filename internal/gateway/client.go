@@ -42,6 +42,11 @@ type Client struct {
 
 	// Health stats
 	healthProvider HealthStatsProvider
+
+	// Connection status
+	connected     atomic.Bool
+	lastError     atomic.Value // stores string
+	authenticated atomic.Bool
 }
 
 func NewClient(url string, ctx context.Context, creds *auth.Credentials, healthProvider HealthStatsProvider) *Client {
@@ -97,6 +102,8 @@ func (c *Client) Connect() error {
 			log.Error("WebSocket handshake failed", "status", resp.StatusCode)
 		}
 		log.Warn("Failed to connect to gateway, will retry", "url", wsURL, "error", err)
+		c.setConnected(false)
+		c.setError(err)
 		go c.reconnectLoop()
 		return nil
 	}
@@ -108,15 +115,22 @@ func (c *Client) Connect() error {
 	c.conn = conn
 	c.connMu.Unlock()
 
+	c.setConnected(true)
+	c.setError(nil)
 	log.Info("Connected to gateway WebSocket")
 
 	// Send validator_register
 	if err := c.sendValidatorRegister(); err != nil {
 		log.Error("Failed to send validator_register", "error", err)
+		c.setConnected(false)
+		c.setError(err)
 		conn.Close()
 		go c.reconnectLoop()
 		return nil
 	}
+
+	c.authenticated.Store(true)
+	log.Info("Authenticated with gateway")
 
 	// Start message reader
 	go c.readMessages()
@@ -244,6 +258,8 @@ func (c *Client) readMessages() {
 			err := conn.ReadJSON(&msg)
 			if err != nil {
 				log.Error("Error reading from gateway", "error", err)
+				c.setConnected(false)
+				c.setError(err)
 				c.connMu.Lock()
 				c.conn = nil
 				c.connMu.Unlock()
@@ -596,4 +612,39 @@ func (c *Client) Close() error {
 
 	close(c.txChan)
 	return nil
+}
+
+// IsConnected returns true if the client is connected to the gateway
+func (c *Client) IsConnected() bool {
+	return c.connected.Load()
+}
+
+// IsAuthenticated returns true if the client is authenticated with the gateway
+func (c *Client) IsAuthenticated() bool {
+	return c.authenticated.Load()
+}
+
+// GetLastError returns the last error message, or empty string if none
+func (c *Client) GetLastError() string {
+	if val := c.lastError.Load(); val != nil {
+		return val.(string)
+	}
+	return ""
+}
+
+// setConnected updates the connection status
+func (c *Client) setConnected(connected bool) {
+	c.connected.Store(connected)
+	if !connected {
+		c.authenticated.Store(false)
+	}
+}
+
+// setError stores an error message for health reporting
+func (c *Client) setError(err error) {
+	if err != nil {
+		c.lastError.Store(err.Error())
+	} else {
+		c.lastError.Store("")
+	}
 }

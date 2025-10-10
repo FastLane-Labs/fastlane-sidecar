@@ -16,10 +16,12 @@ type StatsProvider interface {
 
 // Stats contains sidecar health metrics
 type Stats struct {
-	LastHeartbeat time.Time `json:"last_heartbeat"`
-	TxReceived    uint64    `json:"tx_received"`
-	TxStreamed    uint64    `json:"tx_streamed"`
-	PoolSize      uint64    `json:"pool_size"`
+	LastHeartbeat    time.Time `json:"last_heartbeat"`
+	TxReceived       uint64    `json:"tx_received"`
+	TxStreamed       uint64    `json:"tx_streamed"`
+	PoolSize         uint64    `json:"pool_size"`
+	GatewayConnected bool      `json:"gateway_connected"`
+	GatewayError     string    `json:"gateway_error,omitempty"`
 }
 
 // Server provides HTTP health endpoint
@@ -65,12 +67,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	stats := s.statsProvider.GetHealthStats()
 
 	response := map[string]interface{}{
-		"status":         "ok",
-		"last_heartbeat": stats.LastHeartbeat.Format(time.RFC3339),
-		"tx_received":    stats.TxReceived,
-		"tx_streamed":    stats.TxStreamed,
-		"pool_size":      stats.PoolSize,
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+		"status":            "ok",
+		"last_heartbeat":    stats.LastHeartbeat.Format(time.RFC3339),
+		"tx_received":       stats.TxReceived,
+		"tx_streamed":       stats.TxStreamed,
+		"pool_size":         stats.PoolSize,
+		"gateway_connected": stats.GatewayConnected,
+		"timestamp":         time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if stats.GatewayError != "" {
+		response["gateway_error"] = stats.GatewayError
 	}
 
 	w.Header().Set("Content-Type", "application/json")
