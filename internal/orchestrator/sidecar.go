@@ -188,12 +188,17 @@ func (s *Sidecar) Stop() {
 func (s *Sidecar) registerWithGateway() error {
 	log.Info("Registering with MEV gateway")
 
+	// Create gateway client first (before registration) so it can track errors
+	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials, s)
+
 	// Create registration client
 	regClient := auth.NewRegistrationClient(s.config.GatewayURL)
 
 	// Perform registration using credentials loaded in constructor
 	registerResp, err := regClient.Register(s.ctx, s.credentials)
 	if err != nil {
+		// Store error in gateway client for health reporting
+		s.gatewayClient.SetError(fmt.Errorf("registration failed: %w", err))
 		return fmt.Errorf("registration failed: %w", err)
 	}
 
@@ -224,9 +229,6 @@ func (s *Sidecar) registerWithGateway() error {
 	log.Info("Successfully registered with gateway",
 		"sidecar_id", registerResp.SidecarID,
 		"expires_at", registerResp.ExpiresAt)
-
-	// Create gateway client with authenticated credentials and health provider
-	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials, s)
 
 	// Connect to gateway WebSocket
 	if err := s.gatewayClient.Connect(); err != nil {
