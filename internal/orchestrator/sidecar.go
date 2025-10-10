@@ -43,7 +43,8 @@ type Sidecar struct {
 	healthServer  *health.Server
 
 	// Authentication
-	credentials *auth.Credentials // Loaded once in constructor, reused for registration
+	credentials  *auth.Credentials // Loaded once in constructor, reused for registration
+	gatewayError atomic.Value      // stores gateway error string
 
 	// Context for cancellation
 	ctx    context.Context
@@ -188,17 +189,14 @@ func (s *Sidecar) Stop() {
 func (s *Sidecar) registerWithGateway() error {
 	log.Info("Registering with MEV gateway")
 
-	// Create gateway client first (before registration) so it can track errors
-	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials, s)
-
 	// Create registration client
 	regClient := auth.NewRegistrationClient(s.config.GatewayURL)
 
 	// Perform registration using credentials loaded in constructor
 	registerResp, err := regClient.Register(s.ctx, s.credentials)
 	if err != nil {
-		// Store error in gateway client for health reporting
-		s.gatewayClient.SetError(fmt.Errorf("registration failed: %w", err))
+		// Store error in sidecar for health reporting
+		s.gatewayError.Store(fmt.Sprintf("registration failed: %v", err))
 		return fmt.Errorf("registration failed: %w", err)
 	}
 
@@ -230,10 +228,17 @@ func (s *Sidecar) registerWithGateway() error {
 		"sidecar_id", registerResp.SidecarID,
 		"expires_at", registerResp.ExpiresAt)
 
+	// Create gateway client with authenticated credentials and health provider
+	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials, s)
+
 	// Connect to gateway WebSocket
 	if err := s.gatewayClient.Connect(); err != nil {
+		s.gatewayError.Store(fmt.Sprintf("WebSocket connection failed: %v", err))
 		return fmt.Errorf("WebSocket connection failed: %w", err)
 	}
+
+	// Clear any previous errors on success
+	s.gatewayError.Store("")
 
 	return nil
 }
@@ -269,20 +274,29 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		PoolSize:      s.poolSize.Load(),
 	}
 
-	// Add gateway status if gateway client exists
+	// Add gateway status
 	if s.gatewayClient != nil {
 		stats.GatewayConnected = s.gatewayClient.IsConnected()
 		stats.GatewayAuthenticated = s.gatewayClient.IsAuthenticated()
 
 		// Set error if not connected or not authenticated
 		if !stats.GatewayConnected || !stats.GatewayAuthenticated {
-			stats.GatewayError = s.gatewayClient.GetLastError()
+			// Use client's error if available, otherwise use sidecar's stored error
+			if clientErr := s.gatewayClient.GetLastError(); clientErr != "" {
+				stats.GatewayError = clientErr
+			} else if sidecarErr := s.getGatewayError(); sidecarErr != "" {
+				stats.GatewayError = sidecarErr
+			}
 		}
 	} else {
-		// Gateway is disabled or not initialized
+		// Gateway client not created yet
 		stats.GatewayConnected = false
 		stats.GatewayAuthenticated = false
-		if s.config.DisableGateway {
+
+		// Check if we have a stored error (e.g., registration failure)
+		if sidecarErr := s.getGatewayError(); sidecarErr != "" {
+			stats.GatewayError = sidecarErr
+		} else if s.config.DisableGateway {
 			stats.GatewayError = "gateway disabled"
 		} else {
 			stats.GatewayError = "gateway not initialized"
@@ -290,6 +304,14 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 	}
 
 	return stats
+}
+
+// getGatewayError returns the stored gateway error string
+func (s *Sidecar) getGatewayError() string {
+	if val := s.gatewayError.Load(); val != nil {
+		return val.(string)
+	}
+	return ""
 }
 
 // retryGatewayRegistration retries registration in the background with exponential backoff

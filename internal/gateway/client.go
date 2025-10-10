@@ -648,8 +648,3 @@ func (c *Client) setError(err error) {
 		c.lastError.Store("")
 	}
 }
-
-// SetError stores an error message for health reporting (public version)
-func (c *Client) SetError(err error) {
-	c.setError(err)
-}
