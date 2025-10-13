@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"strings"
 	"time"
 
@@ -21,9 +22,13 @@ type RegistrationClient struct {
 
 // NewRegistrationClient creates a new registration client
 func NewRegistrationClient(gatewayURL string) *RegistrationClient {
+	// Create cookie jar to preserve cookies (needed for ALB sticky sessions)
+	jar, _ := cookiejar.New(nil)
+
 	return &RegistrationClient{
 		gatewayURL: gatewayURL,
 		httpClient: &http.Client{
+			Jar:     jar,
 			Timeout: 30 * time.Second,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				// Preserve the original HTTP method on redirects
