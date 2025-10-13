@@ -113,6 +113,20 @@ func (c *Client) Connect() error {
 	c.conn = conn
 	c.connMu.Unlock()
 
+	// Set up ping/pong handlers
+	conn.SetPongHandler(func(appData string) error {
+		log.Debug("Received pong from gateway")
+		return nil
+	})
+
+	conn.SetPingHandler(func(appData string) error {
+		log.Debug("Received ping from gateway, sending pong")
+		c.writeMu.Lock()
+		err := conn.WriteMessage(websocket.PongMessage, []byte(appData))
+		c.writeMu.Unlock()
+		return err
+	})
+
 	c.setError(nil)
 	log.Info("Connected to gateway WebSocket")
 
@@ -273,6 +287,8 @@ func (c *Client) readMessages() {
 
 // handleJSONRPCMessage handles JSON-RPC responses and notifications
 func (c *Client) handleJSONRPCMessage(msg json.RawMessage) error {
+	log.Debug("Handling JSON-RPC message", "raw", string(msg))
+
 	// Try to detect if it's a response (has "id") or notification (has "method")
 	var peek struct {
 		ID     *int64  `json:"id"`
@@ -284,6 +300,7 @@ func (c *Client) handleJSONRPCMessage(msg json.RawMessage) error {
 
 	// Handle JSON-RPC response
 	if peek.ID != nil {
+		log.Debug("Received JSON-RPC response", "id", *peek.ID)
 		var resp JSONRPCResponse
 		if err := json.Unmarshal(msg, &resp); err != nil {
 			return fmt.Errorf("failed to unmarshal response: %w", err)
@@ -294,9 +311,12 @@ func (c *Client) handleJSONRPCMessage(msg json.RawMessage) error {
 			respChan := ch.(chan *JSONRPCResponse)
 			select {
 			case respChan <- &resp:
+				log.Debug("Delivered response to waiting request", "id", *peek.ID)
 			default:
 				log.Warn("Response channel full, dropping response", "id", *peek.ID)
 			}
+		} else {
+			log.Warn("Received response for unknown request ID", "id", *peek.ID)
 		}
 		return nil
 	}
