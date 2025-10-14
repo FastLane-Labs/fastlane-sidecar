@@ -8,7 +8,6 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 // TransactionPool manages transactions with TTL
@@ -27,15 +26,9 @@ func NewTransactionPool(maxDuration time.Duration) *TransactionPool {
 }
 
 // AddTransaction adds a transaction to the pool
-func (tp *TransactionPool) AddTransaction(txBytes []byte, source string) error {
+func (tp *TransactionPool) AddTransaction(tx *ethTypes.Transaction, txBytes []byte, source string) error {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-
-	// Decode transaction
-	var tx ethTypes.Transaction
-	if err := rlp.DecodeBytes(txBytes, &tx); err != nil {
-		return err
-	}
 
 	hash := tx.Hash()
 
@@ -47,7 +40,7 @@ func (tp *TransactionPool) AddTransaction(txBytes []byte, source string) error {
 
 	// Create pooled transaction
 	pooledTx := &types.PooledTransaction{
-		Tx:         &tx,
+		Tx:         tx,
 		TxBytes:    txBytes,
 		ReceivedAt: time.Now(),
 		Source:     source,

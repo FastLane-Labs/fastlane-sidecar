@@ -463,15 +463,16 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 		return
 	}
 
-	// Add to transaction pool first
-	if err := s.txPool.AddTransaction(txBytes, source); err != nil {
-		log.Error("Failed to add transaction to pool", "error", err)
-		return
-	}
+	hash := tx.Hash()
 
 	// Check if this is a fastlane bid
 	txType, bidData := s.filter.ClassifyTransaction(&tx)
-	hash := tx.Hash()
+
+	// Add to transaction pool with decoded tx
+	if err := s.txPool.AddTransaction(&tx, txBytes, source); err != nil {
+		log.Error("Failed to add transaction to pool", "error", err)
+		return
+	}
 
 	// Update transaction type in pool
 	s.txPool.UpdateTransactionType(hash, txType)
