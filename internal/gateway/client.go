@@ -130,6 +130,11 @@ func (c *Client) Connect() error {
 	c.setError(nil)
 	log.Info("Connected to gateway WebSocket")
 
+	// CRITICAL: Start message reader BEFORE sending validator_register
+	// Otherwise sendValidatorRegister() will block waiting for a response
+	// that will never be read
+	go c.readMessages()
+
 	// Send validator_register
 	if err := c.sendValidatorRegister(); err != nil {
 		log.Error("Failed to send validator_register", "error", err)
@@ -141,9 +146,6 @@ func (c *Client) Connect() error {
 
 	c.authenticated.Store(true)
 	log.Info("Authenticated with gateway")
-
-	// Start message reader
-	go c.readMessages()
 
 	// Start heartbeat
 	c.startHeartbeat()
