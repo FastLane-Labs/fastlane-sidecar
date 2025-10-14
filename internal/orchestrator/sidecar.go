@@ -419,8 +419,9 @@ func (s *Sidecar) processGatewayTransactions() {
 		case <-s.ctx.Done():
 			log.Info("Gateway transaction processing stopped")
 			return
-		case msgBytes := <-gatewayTxChan:
-			s.handleIncomingMessage(msgBytes, "gateway")
+		case txBytes := <-gatewayTxChan:
+			// Gateway sends raw RLP transaction bytes, not FastlaneMessage enums
+			s.handleIncomingTransaction(txBytes, "gateway")
 		}
 	}
 }
