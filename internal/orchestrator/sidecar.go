@@ -20,6 +20,7 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type Sidecar struct {
@@ -456,10 +457,21 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	// The txBytes are raw transaction bytes from TxAdded message
 
-	// Decode transaction using UnmarshalBinary which handles typed transactions correctly
+	// Decode transaction based on source
+	// Node sends legacy RLP, gateway sends EIP-2718 typed transactions
 	var tx ethTypes.Transaction
-	if err := tx.UnmarshalBinary(txBytes); err != nil {
-		log.Error("Failed to decode transaction", "error", err, "source", source, "bytes_len", len(txBytes))
+	var err error
+
+	if source == "gateway" {
+		// Gateway sends EIP-2718 typed transactions, use UnmarshalBinary
+		err = tx.UnmarshalBinary(txBytes)
+	} else {
+		// Node sends legacy RLP format
+		err = rlp.DecodeBytes(txBytes, &tx)
+	}
+
+	if err != nil {
+		log.Error("Failed to decode transaction", "error", err, "source", source)
 		return
 	}
 
