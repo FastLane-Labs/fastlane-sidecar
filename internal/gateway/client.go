@@ -253,10 +253,6 @@ func (c *Client) NotifyTransactionDropped(txHash common.Hash) error {
 
 // readMessages reads and handles WebSocket messages
 func (c *Client) readMessages() {
-	readerID := time.Now().UnixNano() // Unique ID for this reader instance
-	log.Debug("Starting message reader", "reader_id", readerID)
-	defer log.Debug("Message reader exiting", "reader_id", readerID)
-
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -267,14 +263,13 @@ func (c *Client) readMessages() {
 			c.connMu.RUnlock()
 
 			if conn == nil {
-				log.Debug("Connection is nil, reader exiting", "reader_id", readerID)
 				return
 			}
 
 			var msg json.RawMessage
 			err := conn.ReadJSON(&msg)
 			if err != nil {
-				log.Error("Error reading from gateway", "error", err, "reader_id", readerID)
+				log.Error("Error reading from gateway", "error", err)
 				c.setError(err)
 				c.connMu.Lock()
 				c.conn = nil
@@ -286,7 +281,7 @@ func (c *Client) readMessages() {
 
 			// Try to parse as JSON-RPC response or notification
 			if err := c.handleJSONRPCMessage(msg); err != nil {
-				log.Error("Error handling gateway message", "error", err, "reader_id", readerID)
+				log.Error("Error handling gateway message", "error", err)
 			}
 		}
 	}
