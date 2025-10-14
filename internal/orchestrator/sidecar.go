@@ -59,9 +59,10 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
-	// Load authentication credentials if gateway is enabled and credentials are provided
+	// Load authentication credentials if gateway ingress or egress is enabled and credentials are provided
 	var credentials *auth.Credentials
-	if !config.DisableGateway && config.DelegationPath != "" && config.KeystorePath != "" {
+	gatewayEnabled := !config.DisableGatewayIngress || !config.DisableGatewayEgress
+	if gatewayEnabled && config.DelegationPath != "" && config.KeystorePath != "" {
 		log.Info("Loading authentication credentials")
 
 		// Load delegation envelope
@@ -92,10 +93,10 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		log.Info("Credentials loaded and validated successfully",
 			"validator_pubkey", envelope.Delegation.ValidatorPubkey,
 			"sidecar_pubkey", envelope.Delegation.SidecarPubkey)
-	} else if !config.DisableGateway {
+	} else if gatewayEnabled {
 		log.Warn("No authentication credentials provided, gateway connection will use unauthenticated mode (if supported)")
 	} else {
-		log.Info("Gateway connection disabled")
+		log.Info("Gateway connection disabled (ingress and egress both disabled)")
 	}
 
 	s := &Sidecar{
@@ -145,8 +146,9 @@ func (s *Sidecar) Start() error {
 		return err
 	}
 
-	// Register with gateway if not disabled and credentials are available
-	if !s.config.DisableGateway && s.credentials != nil {
+	// Register with gateway if ingress or egress is enabled and credentials are available
+	gatewayEnabled := !s.config.DisableGatewayIngress || !s.config.DisableGatewayEgress
+	if gatewayEnabled && s.credentials != nil {
 		if err := s.registerWithGateway(); err != nil {
 			// Check if error is recoverable (e.g., waiting for whitelist, network issues)
 			if isRetryableError(err) {
@@ -296,8 +298,8 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		// Check if we have a stored error (e.g., registration failure)
 		if sidecarErr := s.getGatewayError(); sidecarErr != "" {
 			stats.GatewayError = sidecarErr
-		} else if s.config.DisableGateway {
-			stats.GatewayError = "gateway disabled"
+		} else if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
+			stats.GatewayError = "gateway disabled (ingress and egress both disabled)"
 		} else {
 			stats.GatewayError = "gateway not initialized"
 		}
@@ -407,7 +409,12 @@ func (s *Sidecar) processNodeTransactions() {
 // processGatewayTransactions handles transactions from the gateway
 func (s *Sidecar) processGatewayTransactions() {
 	if s.gatewayClient == nil {
-		log.Info("Gateway disabled, not processing gateway transactions")
+		log.Info("Gateway client not initialized, not processing gateway transactions")
+		return
+	}
+
+	if s.config.DisableGatewayIngress {
+		log.Info("Gateway ingress disabled, not processing gateway transactions")
 		return
 	}
 
@@ -589,7 +596,10 @@ func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
 // forwardToGateway sends transaction to gateway (if it didn't come from there)
 func (s *Sidecar) forwardToGateway(txBytes []byte) {
 	if s.gatewayClient == nil {
-		return // Gateway disabled
+		return // Gateway client not initialized
+	}
+	if s.config.DisableGatewayEgress {
+		return // Gateway egress disabled
 	}
 	if err := s.gatewayClient.SendTransactionBytes(txBytes); err != nil {
 		log.Error("Failed to send transaction to gateway", "error", err)
