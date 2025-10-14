@@ -28,9 +28,21 @@ func TestHandleBundleNotification(t *testing.T) {
 		{
 			name: "valid bundle with 2 transactions",
 			params: map[string]interface{}{
-				"txs": []interface{}{
-					"0x1234567890abcdef",
-					"0xfedcba0987654321",
+				"bundles": []interface{}{
+					map[string]interface{}{
+						"bundle_id":   "test-bundle-1",
+						"bundle_type": "TOP_OF_BLOCK",
+						"txs": []interface{}{
+							map[string]interface{}{
+								"tx_hash":    "0xabc123",
+								"raw_tx_hex": "0x1234567890abcdef",
+							},
+							map[string]interface{}{
+								"tx_hash":    "0xdef456",
+								"raw_tx_hex": "0xfedcba0987654321",
+							},
+						},
+					},
 				},
 			},
 			wantErr:     false,
@@ -39,8 +51,17 @@ func TestHandleBundleNotification(t *testing.T) {
 		{
 			name: "bundle with 1 transaction (warning logged)",
 			params: map[string]interface{}{
-				"txs": []interface{}{
-					"0x1234567890abcdef",
+				"bundles": []interface{}{
+					map[string]interface{}{
+						"bundle_id":   "test-bundle-2",
+						"bundle_type": "TOP_OF_BLOCK",
+						"txs": []interface{}{
+							map[string]interface{}{
+								"tx_hash":    "0xabc123",
+								"raw_tx_hex": "0x1234567890abcdef",
+							},
+						},
+					},
 				},
 			},
 			wantErr:     false,
@@ -49,17 +70,32 @@ func TestHandleBundleNotification(t *testing.T) {
 		{
 			name: "bundle with 3 transactions (warning logged)",
 			params: map[string]interface{}{
-				"txs": []interface{}{
-					"0x1234567890abcdef",
-					"0xfedcba0987654321",
-					"0xabcdef1234567890",
+				"bundles": []interface{}{
+					map[string]interface{}{
+						"bundle_id":   "test-bundle-3",
+						"bundle_type": "TOP_OF_BLOCK",
+						"txs": []interface{}{
+							map[string]interface{}{
+								"tx_hash":    "0xabc123",
+								"raw_tx_hex": "0x1234567890abcdef",
+							},
+							map[string]interface{}{
+								"tx_hash":    "0xdef456",
+								"raw_tx_hex": "0xfedcba0987654321",
+							},
+							map[string]interface{}{
+								"tx_hash":    "0x789abc",
+								"raw_tx_hex": "0xabcdef1234567890",
+							},
+						},
+					},
 				},
 			},
 			wantErr:     false,
 			wantTxCount: 3,
 		},
 		{
-			name:    "missing txs field",
+			name:    "missing bundles field",
 			params:  map[string]interface{}{},
 			wantErr: true,
 		},
@@ -71,8 +107,17 @@ func TestHandleBundleNotification(t *testing.T) {
 		{
 			name: "invalid hex in transaction",
 			params: map[string]interface{}{
-				"txs": []interface{}{
-					"0xZZZZ", // Invalid hex
+				"bundles": []interface{}{
+					map[string]interface{}{
+						"bundle_id":   "test-bundle-4",
+						"bundle_type": "TOP_OF_BLOCK",
+						"txs": []interface{}{
+							map[string]interface{}{
+								"tx_hash":    "0xbad",
+								"raw_tx_hex": "0xZZZZ", // Invalid hex
+							},
+						},
+					},
 				},
 			},
 			wantErr:     false,
@@ -81,8 +126,17 @@ func TestHandleBundleNotification(t *testing.T) {
 		{
 			name: "transaction without 0x prefix",
 			params: map[string]interface{}{
-				"txs": []interface{}{
-					"1234567890abcdef",
+				"bundles": []interface{}{
+					map[string]interface{}{
+						"bundle_id":   "test-bundle-5",
+						"bundle_type": "TOP_OF_BLOCK",
+						"txs": []interface{}{
+							map[string]interface{}{
+								"tx_hash":    "0xabc123",
+								"raw_tx_hex": "1234567890abcdef",
+							},
+						},
+					},
 				},
 			},
 			wantErr:     false,
@@ -261,9 +315,21 @@ func TestHandleNotification(t *testing.T) {
 				JSONRPC: "2.0",
 				Method:  "validator_bundle_notification",
 				Params: map[string]interface{}{
-					"txs": []interface{}{
-						"0x1234567890abcdef",
-						"0xfedcba0987654321",
+					"bundles": []interface{}{
+						map[string]interface{}{
+							"bundle_id":   "test-bundle-1",
+							"bundle_type": "TOP_OF_BLOCK",
+							"txs": []interface{}{
+								map[string]interface{}{
+									"tx_hash":    "0xabc123",
+									"raw_tx_hex": "0x1234567890abcdef",
+								},
+								map[string]interface{}{
+									"tx_hash":    "0xdef456",
+									"raw_tx_hex": "0xfedcba0987654321",
+								},
+							},
+						},
 					},
 				},
 			},

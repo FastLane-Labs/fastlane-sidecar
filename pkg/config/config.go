@@ -49,7 +49,8 @@ type Config struct {
 	Network string // Network name (e.g., "testnet", "testnet-2", "mainnet")
 
 	// Gateway control
-	DisableGateway bool // Disable gateway connection
+	DisableGatewayIngress bool // Disable receiving transactions from gateway
+	DisableGatewayEgress  bool // Disable sending transactions to gateway
 }
 
 func NewConfig() *Config {
@@ -72,7 +73,8 @@ func NewConfig() *Config {
 	fs.StringVar(&conf.PasswordFilePath, "password-file", "", "Path to file containing keystore password")
 	fs.StringVar(&conf.Network, "network", "testnet", "Network name (testnet, testnet-2, mainnet)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional, uses network default if not set)")
-	fs.BoolVar(&conf.DisableGateway, "disable-gateway", false, "Disable gateway connection")
+	fs.BoolVar(&conf.DisableGatewayIngress, "disable-gateway-ingress", false, "Disable receiving transactions from gateway")
+	fs.BoolVar(&conf.DisableGatewayEgress, "disable-gateway-egress", false, "Disable sending transactions to gateway")
 
 	fs.Parse(os.Args[1:])
 

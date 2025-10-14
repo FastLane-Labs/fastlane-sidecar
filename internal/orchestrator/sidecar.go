@@ -20,7 +20,6 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type Sidecar struct {
@@ -60,9 +59,10 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
-	// Load authentication credentials if gateway is enabled and credentials are provided
+	// Load authentication credentials if gateway ingress or egress is enabled and credentials are provided
 	var credentials *auth.Credentials
-	if !config.DisableGateway && config.DelegationPath != "" && config.KeystorePath != "" {
+	gatewayEnabled := !config.DisableGatewayIngress || !config.DisableGatewayEgress
+	if gatewayEnabled && config.DelegationPath != "" && config.KeystorePath != "" {
 		log.Info("Loading authentication credentials")
 
 		// Load delegation envelope
@@ -93,10 +93,10 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		log.Info("Credentials loaded and validated successfully",
 			"validator_pubkey", envelope.Delegation.ValidatorPubkey,
 			"sidecar_pubkey", envelope.Delegation.SidecarPubkey)
-	} else if !config.DisableGateway {
+	} else if gatewayEnabled {
 		log.Warn("No authentication credentials provided, gateway connection will use unauthenticated mode (if supported)")
 	} else {
-		log.Info("Gateway connection disabled")
+		log.Info("Gateway connection disabled (ingress and egress both disabled)")
 	}
 
 	s := &Sidecar{
@@ -146,8 +146,9 @@ func (s *Sidecar) Start() error {
 		return err
 	}
 
-	// Register with gateway if not disabled and credentials are available
-	if !s.config.DisableGateway && s.credentials != nil {
+	// Register with gateway if ingress or egress is enabled and credentials are available
+	gatewayEnabled := !s.config.DisableGatewayIngress || !s.config.DisableGatewayEgress
+	if gatewayEnabled && s.credentials != nil {
 		if err := s.registerWithGateway(); err != nil {
 			// Check if error is recoverable (e.g., waiting for whitelist, network issues)
 			if isRetryableError(err) {
@@ -297,8 +298,8 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		// Check if we have a stored error (e.g., registration failure)
 		if sidecarErr := s.getGatewayError(); sidecarErr != "" {
 			stats.GatewayError = sidecarErr
-		} else if s.config.DisableGateway {
-			stats.GatewayError = "gateway disabled"
+		} else if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
+			stats.GatewayError = "gateway disabled (ingress and egress both disabled)"
 		} else {
 			stats.GatewayError = "gateway not initialized"
 		}
@@ -408,7 +409,12 @@ func (s *Sidecar) processNodeTransactions() {
 // processGatewayTransactions handles transactions from the gateway
 func (s *Sidecar) processGatewayTransactions() {
 	if s.gatewayClient == nil {
-		log.Info("Gateway disabled, not processing gateway transactions")
+		log.Info("Gateway client not initialized, not processing gateway transactions")
+		return
+	}
+
+	if s.config.DisableGatewayIngress {
+		log.Info("Gateway ingress disabled, not processing gateway transactions")
 		return
 	}
 
@@ -419,8 +425,9 @@ func (s *Sidecar) processGatewayTransactions() {
 		case <-s.ctx.Done():
 			log.Info("Gateway transaction processing stopped")
 			return
-		case msgBytes := <-gatewayTxChan:
-			s.handleIncomingMessage(msgBytes, "gateway")
+		case txBytes := <-gatewayTxChan:
+			// Gateway sends raw RLP transaction bytes, not FastlaneMessage enums
+			s.handleIncomingTransaction(txBytes, "gateway")
 		}
 	}
 }
@@ -456,22 +463,25 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	// The txBytes are raw transaction bytes from TxAdded message
 
-	// Decode transaction
+	// Decode transaction using UnmarshalBinary which handles both:
+	// - Legacy RLP transactions
+	// - EIP-2718 typed transactions (envelope format)
 	var tx ethTypes.Transaction
-	if err := rlp.DecodeBytes(txBytes, &tx); err != nil {
+	if err := tx.UnmarshalBinary(txBytes); err != nil {
 		log.Error("Failed to decode transaction", "error", err, "source", source)
 		return
 	}
 
-	// Add to transaction pool first
-	if err := s.txPool.AddTransaction(txBytes, source); err != nil {
-		log.Error("Failed to add transaction to pool", "error", err)
-		return
-	}
+	hash := tx.Hash()
 
 	// Check if this is a fastlane bid
 	txType, bidData := s.filter.ClassifyTransaction(&tx)
-	hash := tx.Hash()
+
+	// Add to transaction pool with decoded tx
+	if err := s.txPool.AddTransaction(&tx, txBytes, source); err != nil {
+		log.Error("Failed to add transaction to pool", "error", err)
+		return
+	}
 
 	// Update transaction type in pool
 	s.txPool.UpdateTransactionType(hash, txType)
@@ -586,7 +596,10 @@ func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
 // forwardToGateway sends transaction to gateway (if it didn't come from there)
 func (s *Sidecar) forwardToGateway(txBytes []byte) {
 	if s.gatewayClient == nil {
-		return // Gateway disabled
+		return // Gateway client not initialized
+	}
+	if s.config.DisableGatewayEgress {
+		return // Gateway egress disabled
 	}
 	if err := s.gatewayClient.SendTransactionBytes(txBytes); err != nil {
 		log.Error("Failed to send transaction to gateway", "error", err)

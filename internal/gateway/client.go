@@ -383,40 +383,73 @@ func (c *Client) handleBundleNotification(params interface{}) error {
 		return fmt.Errorf("invalid bundle notification params")
 	}
 
-	// Extract transactions from bundle
-	txs, ok := paramsMap["txs"].([]interface{})
+	// Extract bundles array
+	bundlesInterface, ok := paramsMap["bundles"].([]interface{})
 	if !ok {
-		return fmt.Errorf("bundle notification missing txs field")
+		return fmt.Errorf("bundle notification missing bundles field")
 	}
 
-	if len(txs) != 2 {
-		log.Warn("Bundle notification should contain exactly 2 transactions", "count", len(txs))
-	}
-
-	// Process each transaction in the bundle
-	for i, txData := range txs {
-		txHex, ok := txData.(string)
+	// Process each bundle
+	for bundleIdx, bundleInterface := range bundlesInterface {
+		bundle, ok := bundleInterface.(map[string]interface{})
 		if !ok {
-			log.Error("Invalid transaction format in bundle", "index", i)
+			log.Error("Invalid bundle format", "index", bundleIdx)
 			continue
 		}
 
-		// Remove 0x prefix if present
-		if len(txHex) > 2 && txHex[:2] == "0x" {
-			txHex = txHex[2:]
-		}
+		bundleID, _ := bundle["bundle_id"].(string)
+		bundleType, _ := bundle["bundle_type"].(string)
 
-		txBytes, err := hex.DecodeString(txHex)
-		if err != nil {
-			log.Error("Failed to decode transaction hex", "error", err, "index", i)
+		log.Debug("Processing bundle from gateway",
+			"bundle_id", bundleID,
+			"bundle_type", bundleType,
+			"bundle_index", bundleIdx)
+
+		// Extract transactions from bundle
+		txsInterface, ok := bundle["txs"].([]interface{})
+		if !ok {
+			log.Error("Bundle missing txs field", "bundle_id", bundleID)
 			continue
 		}
 
-		select {
-		case c.txChan <- txBytes:
-			log.Info("Received bundle transaction from gateway", "index", i, "bytes", len(txBytes))
-		default:
-			log.Warn("Transaction channel full, dropping bundle transaction from gateway", "index", i)
+		// Process each transaction in the bundle
+		for txIdx, txInterface := range txsInterface {
+			txMap, ok := txInterface.(map[string]interface{})
+			if !ok {
+				log.Error("Invalid transaction format in bundle", "bundle_idx", bundleIdx, "tx_idx", txIdx)
+				continue
+			}
+
+			// Extract raw_tx_hex from transaction object
+			txHex, ok := txMap["raw_tx_hex"].(string)
+			if !ok {
+				log.Error("Transaction missing raw_tx_hex field", "bundle_id", bundleID, "tx_idx", txIdx)
+				continue
+			}
+
+			// Remove 0x prefix if present
+			if len(txHex) > 2 && txHex[:2] == "0x" {
+				txHex = txHex[2:]
+			}
+
+			txBytes, err := hex.DecodeString(txHex)
+			if err != nil {
+				log.Error("Failed to decode transaction hex", "error", err, "bundle_id", bundleID, "tx_idx", txIdx)
+				continue
+			}
+
+			txHash, _ := txMap["tx_hash"].(string)
+			log.Info("Received bundle transaction from gateway",
+				"bundle_id", bundleID,
+				"tx_hash", txHash,
+				"tx_idx", txIdx,
+				"bytes", len(txBytes))
+
+			select {
+			case c.txChan <- txBytes:
+			default:
+				log.Warn("Transaction channel full, dropping bundle transaction", "bundle_id", bundleID, "tx_hash", txHash)
+			}
 		}
 	}
 

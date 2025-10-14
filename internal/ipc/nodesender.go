@@ -62,25 +62,44 @@ func (ns *NodeSender) Close() error {
 
 // SendTxWithPriority sends a transaction with priority to the node
 func (ns *NodeSender) SendTxWithPriority(txWithPriority types.TxWithPriority) error {
-	if ns.conn == nil {
-		return fmt.Errorf("not connected to node")
+	// Try sending, with one reconnection attempt if it fails
+	maxAttempts := 2
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if ns.conn == nil {
+			log.Warn("Not connected to node, attempting to reconnect")
+			if err := ns.Connect(); err != nil {
+				return fmt.Errorf("failed to reconnect to node: %w", err)
+			}
+		}
+
+		// Serialize using bincode-compatible format
+		data := types.SerializeTxWithPriority(txWithPriority)
+
+		// Send length-delimited message
+		msgLen := uint32(len(data))
+		if err := binary.Write(ns.conn, binary.BigEndian, msgLen); err != nil {
+			log.Warn("Failed to write message length", "error", err, "attempt", attempt+1)
+			ns.conn = nil // Mark connection as broken
+			if attempt < maxAttempts-1 {
+				continue // Retry
+			}
+			return fmt.Errorf("failed to write message length: %w", err)
+		}
+
+		if _, err := ns.conn.Write(data); err != nil {
+			log.Warn("Failed to send priority tx to node", "error", err, "attempt", attempt+1)
+			ns.conn = nil // Mark connection as broken
+			if attempt < maxAttempts-1 {
+				continue // Retry
+			}
+			return fmt.Errorf("failed to send priority tx to node: %w", err)
+		}
+
+		log.Info("Sent transaction with priority to node", "tx_bytes", len(txWithPriority.TxBytes), "priority", txWithPriority.Priority[:4])
+		return nil
 	}
 
-	// Serialize using bincode-compatible format
-	data := types.SerializeTxWithPriority(txWithPriority)
-
-	// Send length-delimited message
-	msgLen := uint32(len(data))
-	if err := binary.Write(ns.conn, binary.BigEndian, msgLen); err != nil {
-		return fmt.Errorf("failed to write message length: %w", err)
-	}
-
-	if _, err := ns.conn.Write(data); err != nil {
-		return fmt.Errorf("failed to send priority tx to node: %w", err)
-	}
-
-	log.Info("Sent transaction with priority to node", "tx_bytes", len(txWithPriority.TxBytes), "priority", txWithPriority.Priority[:4])
-	return nil
+	return fmt.Errorf("failed to send transaction after %d attempts", maxAttempts)
 }
 
 // IsConnected returns true if connected to the node
