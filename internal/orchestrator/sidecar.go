@@ -474,6 +474,12 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 
 	hash := tx.Hash()
 
+	// Check if transaction already exists in pool
+	if s.txPool.Exists(hash) {
+		log.Debug("Transaction already in pool", "hash", hash.Hex())
+		return
+	}
+
 	// Check if this is a fastlane bid
 	txType, bidData := s.filter.ClassifyTransaction(&tx)
 

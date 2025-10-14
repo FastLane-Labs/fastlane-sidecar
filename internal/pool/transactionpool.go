@@ -25,6 +25,13 @@ func NewTransactionPool(maxDuration time.Duration) *TransactionPool {
 	}
 }
 
+func (tp *TransactionPool) Exists(hash common.Hash) bool {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	_, exists := tp.allTxs[hash]
+	return exists
+}
+
 // AddTransaction adds a transaction to the pool
 func (tp *TransactionPool) AddTransaction(tx *ethTypes.Transaction, txBytes []byte, source string) error {
 	tp.mu.Lock()
