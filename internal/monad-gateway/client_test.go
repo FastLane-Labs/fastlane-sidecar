@@ -320,7 +320,7 @@ func TestClient_Connect_NoAccessToken(t *testing.T) {
 		},
 	}
 
-	err := client.connect()
+	_, _, err := client.connect()
 	if err == nil {
 		t.Fatal("Expected error when no access token")
 	}
@@ -340,7 +340,7 @@ func TestClient_Connect_ExpiredToken(t *testing.T) {
 		},
 	}
 
-	err := client.connect()
+	_, _, err := client.connect()
 	if err == nil {
 		t.Fatal("Expected error when token is expired")
 	}

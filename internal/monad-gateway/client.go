@@ -300,8 +300,9 @@ func (c *Client) connectionLoop() {
 			backoff = 1 * time.Second
 		}
 
-		// Attempt to connect
-		if err := c.connect(); err != nil {
+		// Attempt to connect (also starts readLoop)
+		connCtx, connCancel, err := c.connect()
+		if err != nil {
 			log.Warn("Connection failed", "error", err, "retry_in", backoff)
 			c.setLastError(err)
 			time.Sleep(backoff)
@@ -313,19 +314,8 @@ func (c *Client) connectionLoop() {
 		backoff = 1 * time.Second
 		log.Info("Connected to gateway")
 
-		// Create connection-specific context
-		connCtx, connCancel := context.WithCancel(c.ctx)
-
 		// Start goroutines for this connection
 		var wg sync.WaitGroup
-
-		// Reader goroutine
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			c.readLoop(connCtx)
-			connCancel() // Cancel connection context on read error
-		}()
 
 		// Heartbeat goroutine
 		wg.Add(1)
@@ -342,7 +332,9 @@ func (c *Client) connectionLoop() {
 		}()
 
 		// Wait for any goroutine to exit (indicates disconnection)
+		// Note: readLoop is already running from connect()
 		wg.Wait()
+		connCancel() // Ensure readLoop is stopped
 
 		log.Info("Disconnected from gateway, will reconnect")
 		c.connected.Store(false)
@@ -359,14 +351,15 @@ func (c *Client) connectionLoop() {
 }
 
 // connect establishes a WebSocket connection and authenticates
-func (c *Client) connect() error {
+// Returns a context for this connection and a cancel function
+func (c *Client) connect() (context.Context, context.CancelFunc, error) {
 	// Ensure we have valid tokens
 	if c.creds.AccessToken == "" {
-		return fmt.Errorf("no access token available")
+		return nil, nil, fmt.Errorf("no access token available")
 	}
 
 	if time.Now().After(c.creds.TokenExpiry) {
-		return fmt.Errorf("access token expired at %v", c.creds.TokenExpiry)
+		return nil, nil, fmt.Errorf("access token expired at %v", c.creds.TokenExpiry)
 	}
 
 	// Get WebSocket URL
@@ -389,9 +382,9 @@ func (c *Client) connect() error {
 	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
 		if resp != nil {
-			return fmt.Errorf("WebSocket handshake failed: status %d: %w", resp.StatusCode, err)
+			return nil, nil, fmt.Errorf("WebSocket handshake failed: status %d: %w", resp.StatusCode, err)
 		}
-		return fmt.Errorf("WebSocket dial failed: %w", err)
+		return nil, nil, fmt.Errorf("WebSocket dial failed: %w", err)
 	}
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
@@ -417,16 +410,23 @@ func (c *Client) connect() error {
 		return err
 	})
 
+	// Create connection-specific context
+	connCtx, connCancel := context.WithCancel(c.ctx)
+
+	// Start read loop BEFORE sending validator_register so responses can be received
+	go c.readLoop(connCtx)
+
 	// Send validator_register
 	if err := c.sendValidatorRegister(); err != nil {
-		return fmt.Errorf("validator_register failed: %w", err)
+		connCancel() // Cancel context to stop read loop
+		return nil, nil, fmt.Errorf("validator_register failed: %w", err)
 	}
 
 	c.authenticated.Store(true)
 	c.setLastError(nil)
 
 	log.Info("Authenticated with gateway")
-	return nil
+	return connCtx, connCancel, nil
 }
 
 // sendValidatorRegister sends the validator_register JSON-RPC method
