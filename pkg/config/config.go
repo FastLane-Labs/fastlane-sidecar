@@ -16,8 +16,8 @@ const (
 
 // FastlaneContractAddresses maps network names to their fastlane contract addresses
 var FastlaneContractAddresses = map[string]string{
-	"testnet":   "0x0000000000000000000000000000000000000000", // TBD
-	"testnet-2": "0xf9436C4b1353D5B411AD5bb65B9826f34737BbC7", // flashExecutionBid contract
+	"testnet":   "0xb3688810bbd755808979BDaB1592bFb69b78A033", // FastLaneAuctionHandler contract
+	"testnet-2": "0xf9436C4b1353D5B411AD5bb65B9826f34737BbC7", // FastLaneAuctionHandler contract
 	"mainnet":   "0x0000000000000000000000000000000000000000", // TBD
 }
 
@@ -62,7 +62,51 @@ func NewConfig() *Config {
 	var gatewayURLOverride string
 
 	fs := flag.NewFlagSet("UserConfig", flag.ExitOnError)
-	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level")
+
+	// Custom usage function
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Fastlane Sidecar - MEV sidecar for Monad validators\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "The sidecar runs alongside a Monad validator to enhance MEV capture capabilities.\n")
+		fmt.Fprintf(os.Stderr, "It communicates with the validator via Unix sockets and with the MEV gateway via WebSocket.\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fs.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nNetwork Configuration:\n")
+		fmt.Fprintf(os.Stderr, "  Available networks:\n")
+		for network, url := range GatewayURLs {
+			contract := FastlaneContractAddresses[network]
+			fmt.Fprintf(os.Stderr, "    - %s (gateway: %s)\n", network, url)
+			if contract != "0x0000000000000000000000000000000000000000" {
+				fmt.Fprintf(os.Stderr, "      contract: %s\n", contract)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "\nAuthentication:\n")
+		fmt.Fprintf(os.Stderr, "  The sidecar requires two files for gateway authentication:\n")
+		fmt.Fprintf(os.Stderr, "    1. Delegation envelope: <home>/delegation-envelope.json\n")
+		fmt.Fprintf(os.Stderr, "    2. Sidecar keystore:    <home>/sidecar-keystore.json\n")
+		fmt.Fprintf(os.Stderr, "\n  Generate these files using the 'generate-envelope' tool.\n")
+		fmt.Fprintf(os.Stderr, "\n  Keystore password can be provided via:\n")
+		fmt.Fprintf(os.Stderr, "    - Environment variable: SIDECAR_KEYSTORE_PASSWORD\n")
+		fmt.Fprintf(os.Stderr, "    - Password file: -password-file /path/to/password.txt\n")
+		fmt.Fprintf(os.Stderr, "\nIPC Socket Paths (derived from -home):\n")
+		fmt.Fprintf(os.Stderr, "  Node → Sidecar: <home>/%s\n", NodeToSidecarSuffix)
+		fmt.Fprintf(os.Stderr, "  Sidecar → Node: <home>/%s\n", SidecarToNodeSuffix)
+		fmt.Fprintf(os.Stderr, "\nHealth Monitoring:\n")
+		fmt.Fprintf(os.Stderr, "  Health endpoint: http://localhost:8765/health\n")
+		fmt.Fprintf(os.Stderr, "  Check status:    curl http://localhost:8765/health\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  # Run with default settings (testnet)\n")
+		fmt.Fprintf(os.Stderr, "  %s\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Run on testnet-2 with custom home directory\n")
+		fmt.Fprintf(os.Stderr, "  %s -network=testnet-2 -home=/var/lib/fastlane/\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Run with info logging and password file\n")
+		fmt.Fprintf(os.Stderr, "  %s -log-level=info -password-file=/etc/fastlane/password.txt\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Run with gateway disabled (local testing)\n")
+		fmt.Fprintf(os.Stderr, "  %s -disable-gateway-ingress -disable-gateway-egress\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "For more information, visit: https://github.com/FastLane-Labs/fastlane-sidecar\n")
+	}
+
+	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level (debug, info, warn, error)")
 	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
 	fs.StringVar(&gatewayURLOverride, "gateway-url", "", "Override HTTP URL for MEV gateway (optional, uses network default if not set)")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 60000, "Maximum time to hold transactions in pool (ms)")
