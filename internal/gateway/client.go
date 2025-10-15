@@ -152,6 +152,9 @@ func (c *Client) Connect() error {
 	// Start heartbeat
 	c.startHeartbeat()
 
+	// Start proactive token refresher
+	c.startTokenRefresher()
+
 	return nil
 }
 
@@ -573,6 +576,45 @@ func (c *Client) startHeartbeat() {
 				}
 			case <-c.ctx.Done():
 				c.heartbeatTicker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+// startTokenRefresher proactively refreshes tokens at 80% of token lifetime
+func (c *Client) startTokenRefresher() {
+	go func() {
+		for {
+			// Calculate time until refresh (80% of token lifetime)
+			timeUntilRefresh := time.Until(c.creds.TokenExpiry) * 8 / 10
+			if timeUntilRefresh < time.Minute {
+				timeUntilRefresh = time.Minute
+			}
+
+			select {
+			case <-time.After(timeUntilRefresh):
+				log.Info("Proactively refreshing tokens", "current_expiry", c.creds.TokenExpiry)
+
+				// Try HTTP refresh first
+				refreshResp, err := c.regClient.RefreshTokens(c.ctx, c.creds)
+				if err != nil {
+					log.Warn("HTTP token refresh failed, will try in-band refresh on next auth_refresh_challenge", "error", err)
+					// Don't return - keep the refresher running
+					// In-band refresh will be triggered by gateway via validator_auth_expiring notification
+					continue
+				}
+
+				// Update credentials with new tokens
+				c.creds.AccessToken = refreshResp.AccessToken
+				c.creds.RefreshToken = refreshResp.RefreshToken
+				if expiry, err := auth.ParseExpiryTime(refreshResp.ExpiresAt); err == nil {
+					c.creds.TokenExpiry = expiry
+					log.Info("Successfully refreshed tokens via HTTP", "new_expiry", expiry)
+				}
+
+			case <-c.ctx.Done():
+				log.Info("Token refresher stopped")
 				return
 			}
 		}
