@@ -82,8 +82,9 @@ type jsonRPCNotification struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-// NewMonadGatewayClient creates a new gateway client and performs registration
-// This does NOT start the WebSocket connection - call Start() for that
+// NewMonadGatewayClient creates a new gateway client
+// Loads credentials from disk but does NOT perform HTTP registration or WebSocket connection
+// Call Start() to register and connect
 // Returns nil if gateway is disabled (both ingress and egress disabled)
 // Returns nil if credentials are not provided (no delegation or keystore paths)
 func NewMonadGatewayClient(cfg *config.Config) (*Client, error) {
@@ -127,55 +128,15 @@ func NewMonadGatewayClient(cfg *config.Config) (*Client, error) {
 		"validator_pubkey", envelope.Delegation.ValidatorPubkey,
 		"sidecar_pubkey", envelope.Delegation.SidecarPubkey)
 
-	log.Info("Registering with MEV gateway")
-
-	// Create registration client
+	// Create registration client (will be used in Start())
 	regClient := auth.NewRegistrationClient(cfg.GatewayURL)
 
-	// Perform HTTP registration
-	ctx := context.Background()
-	registerResp, err := regClient.Register(ctx, creds)
-	if err != nil {
-		return nil, fmt.Errorf("registration failed: %w", err)
-	}
-
-	// Update credentials with tokens and connection metadata
-	creds.SidecarID = registerResp.SidecarID
-	creds.AccessToken = registerResp.AccessToken
-	creds.RefreshToken = registerResp.RefreshToken
-	creds.WssURL = registerResp.WssURL
-	creds.WsSubprotocol = registerResp.WsSubprotocol
-
-	if registerResp.HeartbeatInterval > 0 {
-		creds.HeartbeatInterval = time.Duration(registerResp.HeartbeatInterval) * time.Second
-	}
-	if registerResp.MaxInflight > 0 {
-		creds.MaxInflight = registerResp.MaxInflight
-	}
-
-	expiry, err := auth.ParseExpiryTime(registerResp.ExpiresAt)
-	if err != nil {
-		log.Warn("Failed to parse token expiry", "error", err)
-		expiry = time.Now().Add(15 * time.Minute)
-	}
-	creds.TokenExpiry = expiry
-
-	log.Info("Successfully registered with gateway",
-		"sidecar_id", registerResp.SidecarID,
-		"expires_at", registerResp.ExpiresAt)
-
-	// Determine buffer size for transaction channel
-	bufferSize := 100
-	if creds.MaxInflight > 0 {
-		bufferSize = creds.MaxInflight
-	}
-
-	// Create client (but don't start connection yet)
+	// Create client with default buffer size (will be updated after registration)
 	client := &Client{
 		config:    cfg,
 		creds:     creds,
 		regClient: regClient,
-		txChan:    make(chan []byte, bufferSize),
+		txChan:    make(chan []byte, 100), // Default buffer, updated after registration
 	}
 
 	return client, nil
@@ -303,10 +264,10 @@ func (c *Client) connectionLoop() {
 		// Attempt to connect (also starts readLoop)
 		connCtx, connCancel, err := c.connect()
 		if err != nil {
-			log.Warn("Connection failed", "error", err, "retry_in", backoff)
 			c.setLastError(err)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, maxBackoff)
+			log.Warn("Connection failed", "error", err, "retry_in", backoff)
 			continue
 		}
 
@@ -351,13 +312,46 @@ func (c *Client) connectionLoop() {
 }
 
 // connect establishes a WebSocket connection and authenticates
+// Performs HTTP registration if needed, then connects via WebSocket
 // Returns a context for this connection and a cancel function
 func (c *Client) connect() (context.Context, context.CancelFunc, error) {
-	// Ensure we have valid tokens
+	// Perform HTTP registration if we don't have tokens yet
 	if c.creds.AccessToken == "" {
-		return nil, nil, fmt.Errorf("no access token available")
+		log.Info("Registering with MEV gateway")
+
+		ctx := context.Background()
+		registerResp, err := c.regClient.Register(ctx, c.creds)
+		if err != nil {
+			return nil, nil, fmt.Errorf("registration failed: %w", err)
+		}
+
+		// Update credentials with tokens and connection metadata
+		c.creds.SidecarID = registerResp.SidecarID
+		c.creds.AccessToken = registerResp.AccessToken
+		c.creds.RefreshToken = registerResp.RefreshToken
+		c.creds.WssURL = registerResp.WssURL
+		c.creds.WsSubprotocol = registerResp.WsSubprotocol
+
+		if registerResp.HeartbeatInterval > 0 {
+			c.creds.HeartbeatInterval = time.Duration(registerResp.HeartbeatInterval) * time.Second
+		}
+		if registerResp.MaxInflight > 0 {
+			c.creds.MaxInflight = registerResp.MaxInflight
+		}
+
+		expiry, err := auth.ParseExpiryTime(registerResp.ExpiresAt)
+		if err != nil {
+			log.Warn("Failed to parse token expiry", "error", err)
+			expiry = time.Now().Add(15 * time.Minute)
+		}
+		c.creds.TokenExpiry = expiry
+
+		log.Info("Successfully registered with gateway",
+			"sidecar_id", registerResp.SidecarID,
+			"expires_at", registerResp.ExpiresAt)
 	}
 
+	// Check if token is expired (might need refresh)
 	if time.Now().After(c.creds.TokenExpiry) {
 		return nil, nil, fmt.Errorf("access token expired at %v", c.creds.TokenExpiry)
 	}
