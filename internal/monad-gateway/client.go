@@ -275,9 +275,9 @@ func (c *Client) connectionLoop() {
 		connCtx, connCancel, err := c.connect()
 		if err != nil {
 			c.setLastError(err)
+			log.Warn("Connection failed", "error", err, "retry_in", backoff)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, maxBackoff)
-			log.Warn("Connection failed", "error", err, "retry_in", backoff)
 			continue
 		}
 
