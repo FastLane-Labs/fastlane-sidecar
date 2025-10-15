@@ -25,6 +25,7 @@ type Client struct {
 
 	// Authentication
 	creds           *auth.Credentials
+	regClient       *auth.RegistrationClient // For token refresh
 	registrationMu  sync.Mutex
 	heartbeatTicker *time.Ticker
 
@@ -58,6 +59,7 @@ func NewClient(url string, ctx context.Context, creds *auth.Credentials, healthP
 		url:               url,
 		ctx:               ctx,
 		creds:             creds,
+		regClient:         auth.NewRegistrationClient(url),
 		txChan:            make(chan []byte, bufferSize),
 		reconnectDelay:    1 * time.Second,
 		maxReconnectDelay: 60 * time.Second,
@@ -591,6 +593,31 @@ func (c *Client) reconnectLoop() {
 		case <-c.ctx.Done():
 			return
 		case <-time.After(delay):
+			// Check if token is expired and refresh if needed
+			if time.Now().After(c.creds.TokenExpiry) {
+				log.Info("Access token expired, refreshing before reconnect")
+				refreshResp, err := c.regClient.RefreshTokens(c.ctx, c.creds)
+				if err != nil {
+					log.Warn("Token refresh failed", "error", err, "retry_in", delay)
+					c.setError(fmt.Errorf("token refresh failed: %w", err))
+					// Exponential backoff
+					delay *= 2
+					if delay > c.maxReconnectDelay {
+						delay = c.maxReconnectDelay
+					}
+					continue
+				}
+
+				// Update credentials with new tokens
+				c.creds.AccessToken = refreshResp.AccessToken
+				c.creds.RefreshToken = refreshResp.RefreshToken
+				if expiry, err := auth.ParseExpiryTime(refreshResp.ExpiresAt); err == nil {
+					c.creds.TokenExpiry = expiry
+				}
+				log.Info("Successfully refreshed tokens", "expires_at", refreshResp.ExpiresAt)
+			}
+
+			// Attempt to reconnect
 			if err := c.Connect(); err != nil {
 				log.Debug("Gateway reconnection failed", "error", err, "retry_in", delay)
 				c.setError(err) // Store error so it shows in health query
