@@ -68,7 +68,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	stats := s.statsProvider.GetHealthStats()
 
 	response := map[string]interface{}{
-		"status":                "ok",
 		"last_heartbeat":        stats.LastHeartbeat.Format(time.RFC3339),
 		"tx_received":           stats.TxReceived,
 		"tx_streamed":           stats.TxStreamed,

@@ -271,6 +271,7 @@ func (c *Client) readMessages() {
 			if err != nil {
 				log.Error("Error reading from gateway", "error", err)
 				c.setError(err)
+				c.authenticated.Store(false)
 				c.connMu.Lock()
 				c.conn = nil
 				c.connMu.Unlock()
@@ -592,6 +593,7 @@ func (c *Client) reconnectLoop() {
 		case <-time.After(delay):
 			if err := c.Connect(); err != nil {
 				log.Debug("Gateway reconnection failed", "error", err, "retry_in", delay)
+				c.setError(err) // Store error so it shows in health query
 				// Exponential backoff
 				delay *= 2
 				if delay > c.maxReconnectDelay {
@@ -648,6 +650,8 @@ func (c *Client) Close() error {
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
 	}
+
+	c.authenticated.Store(false)
 
 	if c.conn != nil {
 		err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))

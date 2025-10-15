@@ -61,10 +61,6 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 
 	// Verify response fields
-	if status, ok := response["status"].(string); !ok || status != "ok" {
-		t.Errorf("Expected status 'ok', got %v", response["status"])
-	}
-
 	if txReceived, ok := response["tx_received"].(float64); !ok || txReceived != 100 {
 		t.Errorf("Expected tx_received 100, got %v", response["tx_received"])
 	}
