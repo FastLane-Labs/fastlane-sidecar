@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -248,13 +249,22 @@ func (c *Client) connectionLoop() {
 		}
 
 		// Check if token is expired and refresh if needed
-		if time.Now().After(c.creds.TokenExpiry) {
+		if c.creds.AccessToken != "" && time.Now().After(c.creds.TokenExpiry) {
 			log.Info("Access token expired, refreshing before connect")
 			if err := c.refreshTokens(); err != nil {
-				log.Warn("Token refresh failed", "error", err, "retry_in", backoff)
-				c.setLastError(err)
-				time.Sleep(backoff)
-				backoff = min(backoff*2, maxBackoff)
+				// If refresh fails with 401, clear tokens to force re-registration
+				if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "invalid refresh token") {
+					log.Warn("Refresh token is invalid, will re-register", "error", err)
+					c.creds.AccessToken = ""
+					c.creds.RefreshToken = ""
+					c.creds.TokenExpiry = time.Time{} // Zero time
+					backoff = 1 * time.Second         // Reset backoff for re-registration
+				} else {
+					log.Warn("Token refresh failed", "error", err, "retry_in", backoff)
+					c.setLastError(err)
+					time.Sleep(backoff)
+					backoff = min(backoff*2, maxBackoff)
+				}
 				continue
 			}
 			// Reset backoff on successful refresh
