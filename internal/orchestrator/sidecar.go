@@ -2,16 +2,13 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/FastLane-Labs/fastlane-sidecar/internal/auth"
-	"github.com/FastLane-Labs/fastlane-sidecar/internal/gateway"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/health"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/ipc"
+	monadgateway "github.com/FastLane-Labs/fastlane-sidecar/internal/monad-gateway"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/pool"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/priorities"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/processor"
@@ -36,14 +33,10 @@ type Sidecar struct {
 	// Components
 	nodeListener  *ipc.NodeListener
 	nodeSender    *ipc.NodeSender
-	gatewayClient *gateway.Client
+	gatewayClient *monadgateway.Client
 	txPool        *pool.TransactionPool
 	filter        *processor.Filter
 	healthServer  *health.Server
-
-	// Authentication
-	credentials  *auth.Credentials // Loaded once in constructor, reused for registration
-	gatewayError atomic.Value      // stores gateway error string
 
 	// Context for cancellation
 	ctx    context.Context
@@ -59,44 +52,13 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
-	// Load authentication credentials if gateway ingress or egress is enabled and credentials are provided
-	var credentials *auth.Credentials
-	gatewayEnabled := !config.DisableGatewayIngress || !config.DisableGatewayEgress
-	if gatewayEnabled && config.DelegationPath != "" && config.KeystorePath != "" {
-		log.Info("Loading authentication credentials")
-
-		// Load delegation envelope
-		envelope, err := auth.LoadDelegationEnvelope(config.DelegationPath)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to load delegation envelope: %w", err)
-		}
-
-		// Load sidecar key
-		sidecarKey, err := auth.LoadSidecarKey(config.KeystorePath, config.KeystorePass)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to load sidecar key: %w", err)
-		}
-
-		// Validate that sidecar public key matches the delegation
-		if err := auth.ValidateSidecarPubkeyMatch(envelope, sidecarKey); err != nil {
-			cancel()
-			return nil, fmt.Errorf("sidecar key validation failed: %w", err)
-		}
-
-		credentials = &auth.Credentials{
-			SidecarKey:         sidecarKey,
-			DelegationEnvelope: envelope,
-		}
-
-		log.Info("Credentials loaded and validated successfully",
-			"validator_pubkey", envelope.Delegation.ValidatorPubkey,
-			"sidecar_pubkey", envelope.Delegation.SidecarPubkey)
-	} else if gatewayEnabled {
-		log.Warn("No authentication credentials provided, gateway connection will use unauthenticated mode (if supported)")
-	} else {
-		log.Info("Gateway connection disabled (ingress and egress both disabled)")
+	// Create gateway client (handles all credential loading and registration)
+	// Returns nil if gateway is disabled or no credentials provided
+	gatewayClient, err := monadgateway.NewMonadGatewayClient(config)
+	if err != nil {
+		// Log error but continue without gateway - don't fail sidecar startup
+		log.Error("Failed to create gateway client", "error", err)
+		gatewayClient = nil
 	}
 
 	s := &Sidecar{
@@ -104,10 +66,9 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		shutdownChan:  shutdownChan,
 		nodeListener:  ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
 		nodeSender:    ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
-		gatewayClient: nil, // Will be created in Start() after registration
+		gatewayClient: gatewayClient,
 		txPool:        pool.NewTransactionPool(config.PoolMaxDuration),
 		filter:        filter,
-		credentials:   credentials,
 		ctx:           ctx,
 		cancel:        cancel,
 	}
@@ -146,22 +107,12 @@ func (s *Sidecar) Start() error {
 		return err
 	}
 
-	// Register with gateway if ingress or egress is enabled and credentials are available
-	gatewayEnabled := !s.config.DisableGatewayIngress || !s.config.DisableGatewayEgress
-	if gatewayEnabled && s.credentials != nil {
-		if err := s.registerWithGateway(); err != nil {
-			// Check if error is recoverable (e.g., waiting for whitelist, network issues)
-			if isRetryableError(err) {
-				log.Warn("Gateway registration failed with retryable error, will retry in background",
-					"error", err)
-				// Start background retry goroutine
-				go s.retryGatewayRegistration()
-			} else {
-				log.Error("Gateway registration failed with non-retryable error",
-					"error", err,
-					"help", "Check delegation signature, validator whitelist status, or gateway connectivity")
-				// Continue without gateway - this is likely a fatal auth error
-			}
+	// Start gateway connection if client was created
+	if s.gatewayClient != nil {
+		log.Info("Starting gateway connection")
+		if err := s.gatewayClient.Start(); err != nil {
+			log.Error("Failed to start gateway client", "error", err)
+			// Don't fail startup, gateway will retry in background
 		}
 	}
 
@@ -182,81 +133,7 @@ func (s *Sidecar) Stop() {
 		s.nodeSender.Close()
 	}
 	if s.gatewayClient != nil {
-		s.gatewayClient.Close()
-	}
-}
-
-// registerWithGateway performs the initial gateway registration
-func (s *Sidecar) registerWithGateway() error {
-	log.Info("Registering with MEV gateway")
-
-	// Create registration client
-	regClient := auth.NewRegistrationClient(s.config.GatewayURL)
-
-	// Perform registration using credentials loaded in constructor
-	registerResp, err := regClient.Register(s.ctx, s.credentials)
-	if err != nil {
-		// Store error in sidecar for health reporting
-		s.gatewayError.Store(fmt.Sprintf("registration failed: %v", err))
-		return fmt.Errorf("registration failed: %w", err)
-	}
-
-	// Update credentials with tokens and connection metadata
-	s.credentials.SidecarID = registerResp.SidecarID
-	s.credentials.AccessToken = registerResp.AccessToken
-	s.credentials.RefreshToken = registerResp.RefreshToken
-	s.credentials.WssURL = registerResp.WssURL
-	s.credentials.WsSubprotocol = registerResp.WsSubprotocol
-	if registerResp.HeartbeatInterval > 0 {
-		s.credentials.HeartbeatInterval = time.Duration(registerResp.HeartbeatInterval) * time.Second
-	} else {
-		s.credentials.HeartbeatInterval = 0
-	}
-	if registerResp.MaxInflight > 0 {
-		s.credentials.MaxInflight = registerResp.MaxInflight
-	} else {
-		s.credentials.MaxInflight = 0
-	}
-
-	expiry, err := auth.ParseExpiryTime(registerResp.ExpiresAt)
-	if err != nil {
-		log.Warn("Failed to parse token expiry", "error", err)
-		expiry = time.Now().Add(10 * time.Minute)
-	}
-	s.credentials.TokenExpiry = expiry
-
-	log.Info("Successfully registered with gateway",
-		"sidecar_id", registerResp.SidecarID,
-		"expires_at", registerResp.ExpiresAt)
-
-	// Create gateway client with authenticated credentials and health provider
-	s.gatewayClient = gateway.NewClient(s.config.GatewayURL, s.ctx, s.credentials, s)
-
-	// Connect to gateway WebSocket
-	if err := s.gatewayClient.Connect(); err != nil {
-		s.gatewayError.Store(fmt.Sprintf("WebSocket connection failed: %v", err))
-		return fmt.Errorf("WebSocket connection failed: %w", err)
-	}
-
-	// Clear any previous errors on success
-	s.gatewayError.Store("")
-
-	return nil
-}
-
-// GetHealthStats returns current health statistics for the sidecar (gateway format)
-func (s *Sidecar) GetHealthStats() gateway.HealthStats {
-	lastHeartbeatNanos := s.lastHeartbeat.Load()
-	var lastHeartbeat time.Time
-	if lastHeartbeatNanos > 0 {
-		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
-	}
-
-	return gateway.HealthStats{
-		LastHeartbeat: lastHeartbeat,
-		TxReceived:    s.txReceived.Load(),
-		TxStreamed:    s.txStreamed.Load(),
-		PoolSize:      s.poolSize.Load(),
+		s.gatewayClient.Stop()
 	}
 }
 
@@ -277,28 +154,16 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 
 	// Add gateway status
 	if s.gatewayClient != nil {
-		// Gateway client exists means we attempted connection
-		stats.GatewayConnected = true
-		stats.GatewayAuthenticated = s.gatewayClient.IsAuthenticated()
-
-		// Set error if not authenticated
-		if !stats.GatewayAuthenticated {
-			// Use client's error if available, otherwise use sidecar's stored error
-			if clientErr := s.gatewayClient.GetLastError(); clientErr != "" {
-				stats.GatewayError = clientErr
-			} else if sidecarErr := s.getGatewayError(); sidecarErr != "" {
-				stats.GatewayError = sidecarErr
-			}
+		gwHealth := s.gatewayClient.Health()
+		stats.GatewayConnected = gwHealth.Connected
+		stats.GatewayAuthenticated = gwHealth.Authenticated
+		if gwHealth.LastError != "" {
+			stats.GatewayError = gwHealth.LastError
 		}
 	} else {
-		// Gateway client not created yet
 		stats.GatewayConnected = false
 		stats.GatewayAuthenticated = false
-
-		// Check if we have a stored error (e.g., registration failure)
-		if sidecarErr := s.getGatewayError(); sidecarErr != "" {
-			stats.GatewayError = sidecarErr
-		} else if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
+		if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
 			stats.GatewayError = "gateway disabled (ingress and egress both disabled)"
 		} else {
 			stats.GatewayError = "gateway not initialized"
@@ -306,87 +171,6 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 	}
 
 	return stats
-}
-
-// getGatewayError returns the stored gateway error string
-func (s *Sidecar) getGatewayError() string {
-	if val := s.gatewayError.Load(); val != nil {
-		return val.(string)
-	}
-	return ""
-}
-
-// retryGatewayRegistration retries registration in the background with exponential backoff
-func (s *Sidecar) retryGatewayRegistration() {
-	backoff := 30 * time.Second
-	maxBackoff := 5 * time.Minute
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Info("Gateway registration retry stopped")
-			return
-		case <-time.After(backoff):
-			log.Info("Retrying gateway registration", "backoff", backoff)
-
-			if err := s.registerWithGateway(); err != nil {
-				if !isRetryableError(err) {
-					log.Error("Gateway registration retry failed with non-retryable error, stopping retries",
-						"error", err)
-					return
-				}
-
-				log.Warn("Gateway registration retry failed, will retry again",
-					"error", err,
-					"next_retry_in", backoff)
-
-				// Exponential backoff
-				backoff *= 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
-			} else {
-				log.Info("Gateway registration retry succeeded")
-				return
-			}
-		}
-	}
-}
-
-// isRetryableError determines if a registration error is retryable
-func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	errStr := err.Error()
-
-	// Network/connectivity errors - retryable
-	if strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "no such host") ||
-		strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "network") ||
-		strings.Contains(errStr, "EOF") {
-		return true
-	}
-
-	// HTTP status errors that might be retryable
-	// 401 Unauthorized - might be whitelist pending
-	// 403 Forbidden - might be whitelist pending
-	// 503 Service Unavailable - temporary gateway issue
-	// 429 Too Many Requests - rate limiting
-	if strings.Contains(errStr, "status 401") ||
-		strings.Contains(errStr, "status 403") ||
-		strings.Contains(errStr, "status 503") ||
-		strings.Contains(errStr, "status 429") {
-		return true
-	}
-
-	// Non-retryable errors:
-	// 400 Bad Request - invalid delegation format
-	// Signature verification failures - wrong keys
-	// Other 4xx errors - client errors
-	return false
 }
 
 // processNodeTransactions handles transactions from the node
@@ -525,7 +309,7 @@ func (s *Sidecar) handleTransactionDropped(txHashBytes []byte) {
 		// Notify gateway about the dropped transaction if it didn't come from gateway
 		if s.gatewayClient != nil && removedTx.Source != "gateway" {
 			if err := s.gatewayClient.NotifyTransactionDropped(txHash); err != nil {
-				log.Error("Failed to notify gateway of dropped transaction", "error", err, "hash", txHash.Hex())
+				log.Debug("Failed to notify gateway of dropped transaction", "error", err, "hash", txHash.Hex())
 			}
 		}
 	} else {
@@ -604,11 +388,8 @@ func (s *Sidecar) forwardToGateway(txBytes []byte) {
 	if s.gatewayClient == nil {
 		return // Gateway client not initialized
 	}
-	if s.config.DisableGatewayEgress {
-		return // Gateway egress disabled
-	}
-	if err := s.gatewayClient.SendTransactionBytes(txBytes); err != nil {
-		log.Error("Failed to send transaction to gateway", "error", err)
+	if err := s.gatewayClient.SendToGateway(txBytes); err != nil {
+		log.Debug("Failed to send transaction to gateway", "error", err)
 	}
 }
 
