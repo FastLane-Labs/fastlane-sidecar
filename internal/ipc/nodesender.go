@@ -53,6 +53,14 @@ func (ns *NodeSender) reconnectionLoop() {
 			return
 		case <-ns.reconnectChan:
 			// Reconnection triggered
+			// First, ensure old connection is fully closed
+			ns.connMu.Lock()
+			if ns.conn != nil {
+				ns.conn.Close()
+				ns.conn = nil
+			}
+			ns.connMu.Unlock()
+
 			for {
 				// Try to connect
 				conn, err := net.Dial("unix", ns.socketPath)
@@ -142,7 +150,7 @@ func (ns *NodeSender) SendTxWithPriority(txWithPriority types.TxWithPriority) er
 	// Send length-delimited message
 	msgLen := uint32(len(data))
 	if err := binary.Write(conn, binary.BigEndian, msgLen); err != nil {
-		log.Warn("Failed to write message length, triggering reconnect", "error", err)
+		log.Info("Node connection lost, triggering reconnect", "error", err)
 		ns.connected.Store(false)
 		ns.connMu.Lock()
 		ns.conn = nil
@@ -152,7 +160,7 @@ func (ns *NodeSender) SendTxWithPriority(txWithPriority types.TxWithPriority) er
 	}
 
 	if _, err := conn.Write(data); err != nil {
-		log.Warn("Failed to send priority tx to node, triggering reconnect", "error", err)
+		log.Info("Node connection lost, triggering reconnect", "error", err)
 		ns.connected.Store(false)
 		ns.connMu.Lock()
 		ns.conn = nil
