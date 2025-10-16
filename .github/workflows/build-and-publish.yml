@@ -276,12 +276,6 @@ jobs:
           gpg --batch --yes --digest-algo SHA256 --clearsign -o dists/stable/InRelease dists/stable/Release
           gpg --batch --yes --digest-algo SHA256 -abs -o dists/stable/Release.gpg dists/stable/Release
 
-          # Generate and upload public key for APT verification
-          echo "📤 Generating and uploading GPG public key..."
-          gpg --armor --export apt@fastlane-labs.com > ../fastlane-apt-key.gpg
-          aws s3 cp ../fastlane-apt-key.gpg "s3://${S3_BUCKET}/fastlane-apt-key.gpg" \
-                   --content-type="application/pgp-keys"
-
           # Upload packages with correct content types
           echo "📦 Uploading packages..."
           aws s3 sync pool/ "s3://${S3_BUCKET}/pool/" \
