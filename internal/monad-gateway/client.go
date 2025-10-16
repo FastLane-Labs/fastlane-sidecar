@@ -196,10 +196,10 @@ func (c *Client) SendToGateway(txBytes []byte) error {
 	txHex := "0x" + fmt.Sprintf("%x", txBytes)
 
 	params := map[string]interface{}{
-		"tx": txHex,
+		"txs": []string{txHex},
 	}
 
-	_, err := c.sendRequest("validator_publish_tx", params)
+	_, err := c.sendRequest("validator_publish_mempool", params)
 	return err
 }
 
