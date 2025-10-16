@@ -53,8 +53,7 @@ docker run -d \
 ```bash
 # Download and install the GPG key
 sudo mkdir -p /etc/apt/keyrings
-wget -qO - https://fastlane-apt-repo.s3.amazonaws.com/fastlane-apt-key.gpg | \
-  sudo gpg --dearmor -o /etc/apt/keyrings/fastlane-labs.gpg
+wget -qO - https://fastlane.xyz/apt/fastlane-apt-key.gpg.bin -O /etc/apt/keyrings/fastlane-labs.gpg
 
 # Add the repository to your sources
 echo "deb [signed-by=/etc/apt/keyrings/fastlane-labs.gpg] https://fastlane-apt-repo.s3.amazonaws.com stable main" | \
