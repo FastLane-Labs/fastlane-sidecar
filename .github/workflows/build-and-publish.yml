@@ -194,7 +194,12 @@ jobs:
             # Install the package
             sudo dpkg -i ${{ steps.version.outputs.package_name }}_${{ steps.version.outputs.version }}_amd64.deb
 
-            ${{ matrix.package == 'sidecar' && '# Start and enable the service\nsudo systemctl enable --now fastlane-sidecar\n\n# Check status\nsudo systemctl status fastlane-sidecar' || '# Run the command\nfastlane-generate-envelope --help' }}
+            ${{ matrix.package == 'sidecar' && '# Start and enable the service
+            sudo systemctl enable --now fastlane-sidecar
+
+            # Check status
+            sudo systemctl status fastlane-sidecar' || '# Run the command
+            fastlane-generate-envelope --help' }}
             ```
 
             ### 📋 What's included:
