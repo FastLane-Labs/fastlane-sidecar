@@ -253,7 +253,7 @@ func run(homeDir, network, validatorPubkey, validatorKeystore, validatorPassword
 	fmt.Println("  2. Configure sidecar with environment variables:")
 	fmt.Printf("       DELEGATION_PATH=%s\n", output)
 	fmt.Printf("       SIDECAR_KEYSTORE_PATH=%s\n", keystorePath)
-	fmt.Printf("       SIDECAR_PASSWORD=%s\n", sidecarPassword)
+	fmt.Printf("       SIDECAR_PASSWORD=<your-password>\n")
 
 	if network == "mainnet" {
 		fmt.Println()
