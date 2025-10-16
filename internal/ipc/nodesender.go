@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
@@ -13,47 +15,104 @@ import (
 
 // NodeSender sends priority transactions to the node
 type NodeSender struct {
-	socketPath string
-	conn       net.Conn
-	ctx        context.Context
+	socketPath    string
+	conn          net.Conn
+	connMu        sync.RWMutex
+	ctx           context.Context
+	reconnectChan chan struct{}
+	connected     atomic.Bool
 }
 
-// NewNodeSender creates a new node sender
+// NewNodeSender creates a new node sender and starts background reconnection loop
 func NewNodeSender(ctx context.Context, socketPath string) *NodeSender {
-	return &NodeSender{
-		socketPath: socketPath,
-		ctx:        ctx,
+	ns := &NodeSender{
+		socketPath:    socketPath,
+		ctx:           ctx,
+		reconnectChan: make(chan struct{}, 1),
 	}
+
+	// Start background reconnection loop
+	go ns.reconnectionLoop()
+
+	// Trigger initial connection attempt
+	ns.triggerReconnect()
+
+	return ns
 }
 
-// Connect establishes connection to the node
-func (ns *NodeSender) Connect() error {
-	// Retry connection with backoff
-	maxRetries := 10
+// reconnectionLoop continuously tries to maintain connection to the node
+func (ns *NodeSender) reconnectionLoop() {
 	backoff := 100 * time.Millisecond
+	maxBackoff := 5 * time.Second
+	attempt := 0
 
-	for i := 0; i < maxRetries; i++ {
-		conn, err := net.Dial("unix", ns.socketPath)
-		if err == nil {
-			ns.conn = conn
-			log.Info("Connected to node", "socket", ns.socketPath)
-			return nil
-		}
-
-		log.Info("Failed to connect to node, retrying", "attempt", i+1, "error", err)
+	for {
 		select {
 		case <-ns.ctx.Done():
-			return fmt.Errorf("context cancelled while connecting")
-		case <-time.After(backoff):
-			backoff *= 2 // exponential backoff
+			log.Info("Node sender reconnection loop stopped")
+			return
+		case <-ns.reconnectChan:
+			// Reconnection triggered
+			for {
+				// Try to connect
+				conn, err := net.Dial("unix", ns.socketPath)
+				if err == nil {
+					ns.connMu.Lock()
+					ns.conn = conn
+					ns.connMu.Unlock()
+					ns.connected.Store(true)
+					log.Info("Connected to node", "socket", ns.socketPath)
+					backoff = 100 * time.Millisecond // Reset backoff
+					attempt = 0
+					break // Exit retry loop, wait for next trigger
+				}
+
+				attempt++
+				if attempt == 10 {
+					log.Error("Failed to connect to node after 10 attempts - please restart the node", "socket", ns.socketPath, "error", err)
+				} else if attempt > 10 && attempt%10 == 0 {
+					log.Error("Still unable to connect to node - please restart the node", "socket", ns.socketPath, "attempts", attempt, "error", err)
+				} else {
+					log.Info("Failed to connect to node, retrying", "attempt", attempt, "error", err)
+				}
+
+				// Wait with exponential backoff
+				select {
+				case <-ns.ctx.Done():
+					return
+				case <-time.After(backoff):
+					if backoff < maxBackoff {
+						backoff *= 2
+						if backoff > maxBackoff {
+							backoff = maxBackoff
+						}
+					}
+				}
+			}
 		}
 	}
+}
 
-	return fmt.Errorf("failed to connect to node after %d attempts", maxRetries)
+// triggerReconnect signals the reconnection loop to attempt connection
+func (ns *NodeSender) triggerReconnect() {
+	select {
+	case ns.reconnectChan <- struct{}{}:
+	default:
+		// Channel already has a signal, no need to add another
+	}
+}
+
+// Connect is now deprecated - connection happens automatically in background
+func (ns *NodeSender) Connect() error {
+	// Just trigger reconnect and return immediately
+	ns.triggerReconnect()
+	return nil
 }
 
 // Close closes the connection
 func (ns *NodeSender) Close() error {
+	ns.connMu.Lock()
+	defer ns.connMu.Unlock()
 	if ns.conn != nil {
 		return ns.conn.Close()
 	}
@@ -62,44 +121,48 @@ func (ns *NodeSender) Close() error {
 
 // SendTxWithPriority sends a transaction with priority to the node
 func (ns *NodeSender) SendTxWithPriority(txWithPriority types.TxWithPriority) error {
-	// Try sending, with one reconnection attempt if it fails
-	maxAttempts := 2
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if ns.conn == nil {
-			log.Warn("Not connected to node, attempting to reconnect")
-			if err := ns.Connect(); err != nil {
-				return fmt.Errorf("failed to reconnect to node: %w", err)
-			}
-		}
-
-		// Serialize using bincode-compatible format
-		data := types.SerializeTxWithPriority(txWithPriority)
-
-		// Send length-delimited message
-		msgLen := uint32(len(data))
-		if err := binary.Write(ns.conn, binary.BigEndian, msgLen); err != nil {
-			log.Warn("Failed to write message length", "error", err, "attempt", attempt+1)
-			ns.conn = nil // Mark connection as broken
-			if attempt < maxAttempts-1 {
-				continue // Retry
-			}
-			return fmt.Errorf("failed to write message length: %w", err)
-		}
-
-		if _, err := ns.conn.Write(data); err != nil {
-			log.Warn("Failed to send priority tx to node", "error", err, "attempt", attempt+1)
-			ns.conn = nil // Mark connection as broken
-			if attempt < maxAttempts-1 {
-				continue // Retry
-			}
-			return fmt.Errorf("failed to send priority tx to node: %w", err)
-		}
-
-		log.Info("Sent transaction with priority to node", "tx_bytes", len(txWithPriority.TxBytes), "priority", txWithPriority.Priority[:4])
-		return nil
+	// Check if connected
+	if !ns.connected.Load() {
+		log.Error("Not connected to node - reconnection in progress")
+		return fmt.Errorf("not connected to node")
 	}
 
-	return fmt.Errorf("failed to send transaction after %d attempts", maxAttempts)
+	ns.connMu.RLock()
+	conn := ns.conn
+	ns.connMu.RUnlock()
+
+	if conn == nil {
+		log.Error("Not connected to node - reconnection in progress")
+		return fmt.Errorf("not connected to node")
+	}
+
+	// Serialize using bincode-compatible format
+	data := types.SerializeTxWithPriority(txWithPriority)
+
+	// Send length-delimited message
+	msgLen := uint32(len(data))
+	if err := binary.Write(conn, binary.BigEndian, msgLen); err != nil {
+		log.Warn("Failed to write message length, triggering reconnect", "error", err)
+		ns.connected.Store(false)
+		ns.connMu.Lock()
+		ns.conn = nil
+		ns.connMu.Unlock()
+		ns.triggerReconnect()
+		return fmt.Errorf("failed to write message length: %w", err)
+	}
+
+	if _, err := conn.Write(data); err != nil {
+		log.Warn("Failed to send priority tx to node, triggering reconnect", "error", err)
+		ns.connected.Store(false)
+		ns.connMu.Lock()
+		ns.conn = nil
+		ns.connMu.Unlock()
+		ns.triggerReconnect()
+		return fmt.Errorf("failed to send priority tx to node: %w", err)
+	}
+
+	log.Info("Sent transaction with priority to node", "tx_bytes", len(txWithPriority.TxBytes), "priority", txWithPriority.Priority[:4])
+	return nil
 }
 
 // IsConnected returns true if connected to the node
