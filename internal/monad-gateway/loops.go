@@ -26,6 +26,15 @@ func (c *Client) readLoop(ctx context.Context, cancel context.CancelFunc) {
 
 		if conn == nil {
 			log.Error("Connection is nil in read loop")
+
+			// Close old connection immediately before reconnecting
+			c.connMu.Lock()
+			if c.conn != nil {
+				c.conn.Close()
+				c.conn = nil
+			}
+			c.connMu.Unlock()
+
 			cancel()
 			return
 		}
@@ -34,6 +43,15 @@ func (c *Client) readLoop(ctx context.Context, cancel context.CancelFunc) {
 		if err := conn.ReadJSON(&msg); err != nil {
 			log.Error("Error reading from gateway", "error", err)
 			c.setLastError(err)
+
+			// Close old connection immediately before reconnecting
+			c.connMu.Lock()
+			if c.conn != nil {
+				c.conn.Close()
+				c.conn = nil
+			}
+			c.connMu.Unlock()
+
 			cancel()
 			return
 		}
@@ -284,6 +302,15 @@ func (c *Client) heartbeatLoop(ctx context.Context, cancel context.CancelFunc) {
 
 			if _, err := c.sendRequest("validator_heartbeat", params); err != nil {
 				log.Warn("Failed to send heartbeat", "error", err)
+
+				// Close old connection immediately before reconnecting
+				c.connMu.Lock()
+				if c.conn != nil {
+					c.conn.Close()
+					c.conn = nil
+				}
+				c.connMu.Unlock()
+
 				cancel()
 				return
 			}
@@ -309,6 +336,15 @@ func (c *Client) tokenRefreshLoop(ctx context.Context, cancel context.CancelFunc
 
 			if err := c.refreshTokens(); err != nil {
 				log.Warn("HTTP token refresh failed", "error", err)
+
+				// Close old connection immediately before reconnecting
+				c.connMu.Lock()
+				if c.conn != nil {
+					c.conn.Close()
+					c.conn = nil
+				}
+				c.connMu.Unlock()
+
 				cancel()
 				return
 			}

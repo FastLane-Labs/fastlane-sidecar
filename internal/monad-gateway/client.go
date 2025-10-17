@@ -285,26 +285,14 @@ func (c *Client) connectionLoop() {
 		backoff = 1 * time.Second
 		log.Info("Connected to gateway")
 
-		// Wait group which is done when connection context is done
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func(c context.Context) {
-			defer wg.Done()
-			<-c.Done()
-		}(connCtx)
-
 		// Start goroutines for this connection
 		// Heartbeat goroutine
-		go func() {
-			c.heartbeatLoop(connCtx, connCancel)
-		}()
+		go c.heartbeatLoop(connCtx, connCancel)
 
 		// Token refresh goroutine
-		go func() {
-			c.tokenRefreshLoop(connCtx, connCancel)
-		}()
+		go c.tokenRefreshLoop(connCtx, connCancel)
 
-		wg.Wait()
+		<-connCtx.Done()
 
 		log.Info("Disconnected from gateway, will reconnect")
 		c.connected.Store(false)
@@ -421,6 +409,14 @@ func (c *Client) connect() (context.Context, context.CancelFunc, error) {
 
 	// Send validator_register
 	if err := c.sendValidatorRegister(); err != nil {
+		// Close connection immediately on registration failure
+		c.connMu.Lock()
+		if c.conn != nil {
+			c.conn.Close()
+			c.conn = nil
+		}
+		c.connMu.Unlock()
+
 		connCancel() // Cancel context to stop read loop
 		return nil, nil, fmt.Errorf("validator_register failed: %w", err)
 	}
