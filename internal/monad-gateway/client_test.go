@@ -326,7 +326,7 @@ func TestClient_Connect_ExpiredToken(t *testing.T) {
 		},
 	}
 
-	_, _, err := client.connect()
+	err := client.connect()
 	if err == nil {
 		t.Fatal("Expected error when token is expired")
 	}
