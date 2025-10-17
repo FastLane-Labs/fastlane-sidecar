@@ -285,8 +285,15 @@ func (c *Client) connectionLoop() {
 		backoff = 1 * time.Second
 		log.Info("Connected to gateway")
 
-		// Start goroutines for this connection
+		// Wait group which is done when connection context is done
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func(c context.Context) {
+			defer wg.Done()
+			<-c.Done()
+		}(connCtx)
 
+		// Start goroutines for this connection
 		// Heartbeat goroutine
 		go func() {
 			c.heartbeatLoop(connCtx, connCancel)
@@ -297,7 +304,7 @@ func (c *Client) connectionLoop() {
 			c.tokenRefreshLoop(connCtx, connCancel)
 		}()
 
-		<-connCtx.Done()
+		wg.Wait()
 
 		log.Info("Disconnected from gateway, will reconnect")
 		c.connected.Store(false)
