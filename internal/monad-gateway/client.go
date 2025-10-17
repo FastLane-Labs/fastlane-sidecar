@@ -286,26 +286,18 @@ func (c *Client) connectionLoop() {
 		log.Info("Connected to gateway")
 
 		// Start goroutines for this connection
-		var wg sync.WaitGroup
 
 		// Heartbeat goroutine
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
-			c.heartbeatLoop(connCtx)
+			c.heartbeatLoop(connCtx, connCancel)
 		}()
 
 		// Token refresh goroutine
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
-			c.tokenRefreshLoop(connCtx)
+			c.tokenRefreshLoop(connCtx, connCancel)
 		}()
 
-		// Wait for any goroutine to exit (indicates disconnection)
-		// Note: readLoop is already running from connect()
-		wg.Wait()
-		connCancel() // Ensure readLoop is stopped
+		<-connCtx.Done()
 
 		log.Info("Disconnected from gateway, will reconnect")
 		c.connected.Store(false)
@@ -418,7 +410,7 @@ func (c *Client) connect() (context.Context, context.CancelFunc, error) {
 	connCtx, connCancel := context.WithCancel(c.ctx)
 
 	// Start read loop BEFORE sending validator_register so responses can be received
-	go c.readLoop(connCtx)
+	go c.readLoop(connCtx, connCancel)
 
 	// Send validator_register
 	if err := c.sendValidatorRegister(); err != nil {
