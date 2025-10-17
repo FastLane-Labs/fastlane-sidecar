@@ -301,7 +301,9 @@ func TestTokenRefreshLoop(t *testing.T) {
 	client.ctx = ctx
 
 	// Start refresh loop (will fail to refresh but that's ok, we're just testing timing)
-	go client.tokenRefreshLoop(ctx)
+	loopCtx, loopCancel := context.WithCancel(ctx)
+	defer loopCancel()
+	go client.tokenRefreshLoop(loopCtx, loopCancel)
 
 	// Wait for context timeout
 	<-ctx.Done()
@@ -340,7 +342,7 @@ func TestReadLoop_ConnectionError(t *testing.T) {
 	// Start read loop
 	done := make(chan struct{})
 	go func() {
-		client.readLoop(ctx)
+		client.readLoop(ctx, cancel)
 		close(done)
 	}()
 

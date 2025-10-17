@@ -57,7 +57,9 @@ func TestSendRequest_Success(t *testing.T) {
 	defer conn.Close()
 
 	// Start read loop to handle responses
-	go client.readLoop(client.ctx)
+	ctx, cancel := context.WithCancel(client.ctx)
+	defer cancel()
+	go client.readLoop(ctx, cancel)
 
 	// Send request
 	params := map[string]string{"key": "value"}
@@ -131,7 +133,9 @@ func TestSendRequest_ErrorResponse(t *testing.T) {
 	client.conn = conn
 	defer conn.Close()
 
-	go client.readLoop(client.ctx)
+	ctx, cancel := context.WithCancel(client.ctx)
+	defer cancel()
+	go client.readLoop(ctx, cancel)
 
 	// Send request
 	_, err = client.sendRequest("test_method", nil)
@@ -181,7 +185,9 @@ func TestSendRequest_ContextCancellation(t *testing.T) {
 	client.conn = conn
 	defer conn.Close()
 
-	go client.readLoop(client.ctx)
+	ctx, loopCancel := context.WithCancel(client.ctx)
+	defer loopCancel()
+	go client.readLoop(ctx, loopCancel)
 
 	// Start request in goroutine
 	errChan := make(chan error, 1)
@@ -242,7 +248,9 @@ func TestSendRequest_ConcurrentRequests(t *testing.T) {
 	client.conn = conn
 	defer conn.Close()
 
-	go client.readLoop(client.ctx)
+	ctx, cancel := context.WithCancel(client.ctx)
+	defer cancel()
+	go client.readLoop(ctx, cancel)
 
 	// Send multiple concurrent requests
 	numRequests := 10
@@ -322,7 +330,9 @@ func TestSendRequest_MessageIDIncrement(t *testing.T) {
 	client.conn = conn
 	defer conn.Close()
 
-	go client.readLoop(client.ctx)
+	ctx, cancel := context.WithCancel(client.ctx)
+	defer cancel()
+	go client.readLoop(ctx, cancel)
 
 	// Send multiple requests and verify IDs increment
 	for i := 1; i <= 5; i++ {

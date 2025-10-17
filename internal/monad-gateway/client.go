@@ -272,7 +272,7 @@ func (c *Client) connectionLoop() {
 		}
 
 		// Attempt to connect (also starts readLoop)
-		connCtx, connCancel, err := c.connect()
+		err := c.connect()
 		if err != nil {
 			c.setLastError(err)
 			log.Warn("Connection failed", "error", err, "retry_in", backoff)
@@ -285,27 +285,37 @@ func (c *Client) connectionLoop() {
 		backoff = 1 * time.Second
 		log.Info("Connected to gateway")
 
-		// Start goroutines for this connection
+		// Create connection-specific context
+		connCtx, connCancel := context.WithCancel(c.ctx)
+
+		// Wait group which is done when connection context is done
 		var wg sync.WaitGroup
-
-		// Heartbeat goroutine
 		wg.Add(1)
-		go func() {
+		go func(c context.Context) {
 			defer wg.Done()
-			c.heartbeatLoop(connCtx)
+			<-c.Done()
+		}(connCtx)
+
+		go c.readLoop(connCtx, connCancel)
+
+		go func() {
+			// Send validator_register
+			if err := c.sendValidatorRegister(); err != nil {
+				log.Warn("Validator register failed", "error", err)
+				connCancel()
+			}
+
+			c.authenticated.Store(true)
+			c.setLastError(nil)
+
+			log.Info("Authenticated with gateway")
 		}()
 
-		// Token refresh goroutine
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			c.tokenRefreshLoop(connCtx)
-		}()
+		go c.heartbeatLoop(connCtx, connCancel)
 
-		// Wait for any goroutine to exit (indicates disconnection)
-		// Note: readLoop is already running from connect()
+		go c.tokenRefreshLoop(connCtx, connCancel)
+
 		wg.Wait()
-		connCancel() // Ensure readLoop is stopped
 
 		log.Info("Disconnected from gateway, will reconnect")
 		c.connected.Store(false)
@@ -324,7 +334,7 @@ func (c *Client) connectionLoop() {
 // connect establishes a WebSocket connection and authenticates
 // Performs HTTP registration if needed, then connects via WebSocket
 // Returns a context for this connection and a cancel function
-func (c *Client) connect() (context.Context, context.CancelFunc, error) {
+func (c *Client) connect() error {
 	// Perform HTTP registration if we don't have tokens yet
 	if c.creds.AccessToken == "" {
 		log.Info("Registering with MEV gateway")
@@ -332,7 +342,7 @@ func (c *Client) connect() (context.Context, context.CancelFunc, error) {
 		ctx := context.Background()
 		registerResp, err := c.regClient.Register(ctx, c.creds)
 		if err != nil {
-			return nil, nil, fmt.Errorf("registration failed: %w", err)
+			return fmt.Errorf("registration failed: %w", err)
 		}
 
 		// Update credentials with tokens and connection metadata
@@ -363,7 +373,7 @@ func (c *Client) connect() (context.Context, context.CancelFunc, error) {
 
 	// Check if token is expired (might need refresh)
 	if time.Now().After(c.creds.TokenExpiry) {
-		return nil, nil, fmt.Errorf("access token expired at %v", c.creds.TokenExpiry)
+		return fmt.Errorf("access token expired at %v", c.creds.TokenExpiry)
 	}
 
 	// Get WebSocket URL
@@ -386,9 +396,9 @@ func (c *Client) connect() (context.Context, context.CancelFunc, error) {
 	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
 		if resp != nil {
-			return nil, nil, fmt.Errorf("WebSocket handshake failed: status %d: %w", resp.StatusCode, err)
+			return fmt.Errorf("WebSocket handshake failed: status %d: %w", resp.StatusCode, err)
 		}
-		return nil, nil, fmt.Errorf("WebSocket dial failed: %w", err)
+		return fmt.Errorf("WebSocket dial failed: %w", err)
 	}
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
@@ -413,24 +423,7 @@ func (c *Client) connect() (context.Context, context.CancelFunc, error) {
 		c.writeMu.Unlock()
 		return err
 	})
-
-	// Create connection-specific context
-	connCtx, connCancel := context.WithCancel(c.ctx)
-
-	// Start read loop BEFORE sending validator_register so responses can be received
-	go c.readLoop(connCtx)
-
-	// Send validator_register
-	if err := c.sendValidatorRegister(); err != nil {
-		connCancel() // Cancel context to stop read loop
-		return nil, nil, fmt.Errorf("validator_register failed: %w", err)
-	}
-
-	c.authenticated.Store(true)
-	c.setLastError(nil)
-
-	log.Info("Authenticated with gateway")
-	return connCtx, connCancel, nil
+	return nil
 }
 
 // sendValidatorRegister sends the validator_register JSON-RPC method

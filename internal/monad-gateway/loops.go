@@ -11,7 +11,7 @@ import (
 )
 
 // readLoop reads messages from the WebSocket connection
-func (c *Client) readLoop(ctx context.Context) {
+func (c *Client) readLoop(ctx context.Context, cancel context.CancelFunc) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -26,6 +26,7 @@ func (c *Client) readLoop(ctx context.Context) {
 
 		if conn == nil {
 			log.Error("Connection is nil in read loop")
+			cancel()
 			return
 		}
 
@@ -33,6 +34,7 @@ func (c *Client) readLoop(ctx context.Context) {
 		if err := conn.ReadJSON(&msg); err != nil {
 			log.Error("Error reading from gateway", "error", err)
 			c.setLastError(err)
+			cancel()
 			return
 		}
 
@@ -261,7 +263,7 @@ func (c *Client) handleRateLimited(params json.RawMessage) error {
 }
 
 // heartbeatLoop sends periodic heartbeats
-func (c *Client) heartbeatLoop(ctx context.Context) {
+func (c *Client) heartbeatLoop(ctx context.Context, cancel context.CancelFunc) {
 	interval := 30 * time.Second
 	if c.creds.HeartbeatInterval > 0 {
 		interval = c.creds.HeartbeatInterval
@@ -282,14 +284,15 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 
 			if _, err := c.sendRequest("validator_heartbeat", params); err != nil {
 				log.Warn("Failed to send heartbeat", "error", err)
-				// Don't return - let read loop detect the error
+				cancel()
+				return
 			}
 		}
 	}
 }
 
 // tokenRefreshLoop proactively refreshes tokens at 80% of token lifetime
-func (c *Client) tokenRefreshLoop(ctx context.Context) {
+func (c *Client) tokenRefreshLoop(ctx context.Context, cancel context.CancelFunc) {
 	for {
 		// Calculate time until refresh (80% of token lifetime)
 		timeUntilRefresh := time.Until(c.creds.TokenExpiry) * 8 / 10
@@ -306,7 +309,8 @@ func (c *Client) tokenRefreshLoop(ctx context.Context) {
 
 			if err := c.refreshTokens(); err != nil {
 				log.Warn("HTTP token refresh failed", "error", err)
-				// Continue - will try again next cycle or rely on in-band refresh
+				cancel()
+				return
 			}
 		}
 	}
