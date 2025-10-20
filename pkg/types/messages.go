@@ -8,16 +8,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-// FastlaneMessage represents messages sent from node to sidecar
-// This is a Rust enum serialized with bincode
-type FastlaneMessage struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
-}
-
 // TxAdded represents a transaction added to mempool
 type TxAdded struct {
-	TxBytes []byte `json:"tx_bytes"`
+	TxBytes     []byte `json:"tx_bytes"`
+	TimestampMs uint64 `json:"timestamp_ms"`
 }
 
 // TxDropped represents a transaction dropped from mempool

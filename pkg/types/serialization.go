@@ -29,8 +29,8 @@ func SerializeTxWithPriority(tx TxWithPriority) []byte {
 }
 
 // ParseFastlaneMessage parses a bincode-encoded FastlaneMessage enum
-// Returns message type and data (matching mock implementation)
-func ParseFastlaneMessage(msgData []byte) (string, []byte) {
+// Returns message type and structured data
+func ParseFastlaneMessage(msgData []byte) (string, interface{}) {
 	// Basic bincode parsing for FastlaneMessage enum
 	// Bincode encodes Rust enums as: [variant_index: u32][variant_data...]
 
@@ -44,17 +44,25 @@ func ParseFastlaneMessage(msgData []byte) (string, []byte) {
 
 	switch variantIndex {
 	case 0: // TxAdded variant
-		// TxAdded { tx_bytes: Vec<u8> }
-		// Vec<u8> is encoded as [length: u64][data...]
+		// TxAdded { tx_bytes: Vec<u8>, timestamp_ms: u64 }
+		// Format: [vec_len:8][tx_bytes:vec_len][timestamp_ms:8]
 		if len(data) < 8 {
 			return "Unknown", msgData
 		}
 		txBytesLen := binary.LittleEndian.Uint64(data[:8])
-		if len(data) < 8+int(txBytesLen) {
+		if len(data) < 8+int(txBytesLen)+8 {
 			return "Unknown", msgData
 		}
 		txBytes := data[8 : 8+txBytesLen]
-		return "TxAdded", txBytes
+
+		// Extract timestamp_ms (8 bytes after tx_bytes)
+		timestampOffset := 8 + txBytesLen
+		timestampMs := binary.LittleEndian.Uint64(data[timestampOffset : timestampOffset+8])
+
+		return "TxAdded", TxAdded{
+			TxBytes:     txBytes,
+			TimestampMs: timestampMs,
+		}
 
 	case 1: // TxDropped variant
 		// TxDropped { tx_hash: [u8; 32] }
@@ -62,8 +70,11 @@ func ParseFastlaneMessage(msgData []byte) (string, []byte) {
 		if len(data) < 32 {
 			return "Unknown", msgData
 		}
-		txHash := data[:32]
-		return "TxDropped", txHash
+		var txHash [32]byte
+		copy(txHash[:], data[:32])
+		return "TxDropped", TxDropped{
+			TxHash: txHash,
+		}
 
 	case 2: // Heartbeat variant (unit variant, no data)
 		return "Heartbeat", nil
