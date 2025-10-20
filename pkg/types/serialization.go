@@ -28,6 +28,33 @@ func SerializeTxWithPriority(tx TxWithPriority) []byte {
 	return result
 }
 
+// SerializeSidecarMessageTxWithPriority serializes a SidecarMessage with TxWithPriority variant
+// Bincode format for enum: [variant_index: u32][variant_data...]
+// SidecarMessage::TxWithPriority variant has index 0
+func SerializeSidecarMessageTxWithPriority(tx TxWithPriority) []byte {
+	result := make([]byte, 0)
+
+	// Serialize enum variant index (0 for TxWithPriority)
+	variantBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(variantBytes, 0)
+	result = append(result, variantBytes...)
+
+	// Serialize TxWithPriority data
+	result = append(result, SerializeTxWithPriority(tx)...)
+
+	return result
+}
+
+// SerializeSidecarMessageHeartbeat serializes a SidecarMessage with Heartbeat variant
+// Bincode format for enum: [variant_index: u32][variant_data...]
+// SidecarMessage::Heartbeat variant has index 1 and no data (unit variant)
+func SerializeSidecarMessageHeartbeat() []byte {
+	result := make([]byte, 4)
+	// Serialize enum variant index (1 for Heartbeat)
+	binary.LittleEndian.PutUint32(result, 1)
+	return result
+}
+
 // ParseFastlaneMessage parses a bincode-encoded FastlaneMessage enum
 // Returns message type and structured data
 func ParseFastlaneMessage(msgData []byte) (string, interface{}) {

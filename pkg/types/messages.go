@@ -25,6 +25,13 @@ type TxWithPriority struct {
 	Priority [16]uint64 `json:"priority"`
 }
 
+// SidecarMessage represents messages sent from sidecar to node
+// This is a Rust enum serialized with bincode
+type SidecarMessage struct {
+	Type string      `json:"type"` // "TxWithPriority" or "Heartbeat"
+	Data interface{} `json:"data"` // TxWithPriority or nil
+}
+
 // PooledTransaction represents a transaction in the pool with metadata
 type PooledTransaction struct {
 	Tx         *types.Transaction
