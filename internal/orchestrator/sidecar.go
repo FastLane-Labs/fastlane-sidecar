@@ -223,13 +223,31 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 
 	switch msgType {
 	case "TxAdded":
-		log.Info("Received TxAdded message", "bytes", len(data), "source", source)
+		txAdded, ok := data.(types.TxAdded)
+		if !ok {
+			log.Error("Invalid TxAdded data", "source", source)
+			return
+		}
+
+		// Calculate latency if timestamp is provided
+		var latencyMs int64
+		if txAdded.TimestampMs > 0 {
+			nowMs := uint64(time.Now().UnixMilli())
+			latencyMs = int64(nowMs - txAdded.TimestampMs)
+		}
+
+		log.Info("Received TxAdded message", "bytes", len(txAdded.TxBytes), "source", source, "latency_ms", latencyMs)
 		s.txReceived.Add(1) // Only count actual transactions, not heartbeats
-		s.handleIncomingTransaction(data, source)
+		s.handleIncomingTransaction(txAdded.TxBytes, source)
 
 	case "TxDropped":
-		log.Info("Received TxDropped message", "hash", common.BytesToHash(data[:32]).Hex(), "source", source)
-		s.handleTransactionDropped(data[:32])
+		txDropped, ok := data.(types.TxDropped)
+		if !ok {
+			log.Error("Invalid TxDropped data", "source", source)
+			return
+		}
+		log.Info("Received TxDropped message", "hash", common.BytesToHash(txDropped.TxHash[:]).Hex(), "source", source)
+		s.handleTransactionDropped(txDropped.TxHash[:])
 
 	case "Heartbeat":
 		log.Debug("Received Heartbeat message", "source", source)

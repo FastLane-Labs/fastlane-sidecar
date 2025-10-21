@@ -8,16 +8,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-// FastlaneMessage represents messages sent from node to sidecar
-// This is a Rust enum serialized with bincode
-type FastlaneMessage struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
-}
-
 // TxAdded represents a transaction added to mempool
 type TxAdded struct {
-	TxBytes []byte `json:"tx_bytes"`
+	TxBytes     []byte `json:"tx_bytes"`
+	TimestampMs uint64 `json:"timestamp_ms"`
 }
 
 // TxDropped represents a transaction dropped from mempool
@@ -29,6 +23,13 @@ type TxDropped struct {
 type TxWithPriority struct {
 	TxBytes  []byte     `json:"tx_bytes"`
 	Priority [16]uint64 `json:"priority"`
+}
+
+// SidecarMessage represents messages sent from sidecar to node
+// This is a Rust enum serialized with bincode
+type SidecarMessage struct {
+	Type string      `json:"type"` // "TxWithPriority" or "Heartbeat"
+	Data interface{} `json:"data"` // TxWithPriority or nil
 }
 
 // PooledTransaction represents a transaction in the pool with metadata

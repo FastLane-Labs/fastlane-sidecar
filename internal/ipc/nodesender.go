@@ -34,6 +34,9 @@ func NewNodeSender(ctx context.Context, socketPath string) *NodeSender {
 	// Start background reconnection loop
 	go ns.reconnectionLoop()
 
+	// Start background heartbeat sender
+	go ns.heartbeatLoop()
+
 	// Trigger initial connection attempt
 	ns.triggerReconnect()
 
@@ -101,6 +104,31 @@ func (ns *NodeSender) reconnectionLoop() {
 	}
 }
 
+// heartbeatLoop sends heartbeat messages to the node every 30 seconds
+func (ns *NodeSender) heartbeatLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ns.ctx.Done():
+			log.Info("Node sender heartbeat loop stopped")
+			return
+		case <-ticker.C:
+			// Only send heartbeat if connected to avoid spamming logs
+			if !ns.connected.Load() {
+				continue
+			}
+
+			// Send heartbeat - if it fails, it will trigger reconnection
+			if err := ns.SendHeartbeat(); err != nil {
+				log.Debug("Failed to send heartbeat", "error", err)
+				// Reconnection already triggered by SendHeartbeat
+			}
+		}
+	}
+}
+
 // triggerReconnect signals the reconnection loop to attempt connection
 func (ns *NodeSender) triggerReconnect() {
 	select {
@@ -144,8 +172,8 @@ func (ns *NodeSender) SendTxWithPriority(txWithPriority types.TxWithPriority) er
 		return fmt.Errorf("not connected to node")
 	}
 
-	// Serialize using bincode-compatible format
-	data := types.SerializeTxWithPriority(txWithPriority)
+	// Serialize as SidecarMessage::TxWithPriority variant
+	data := types.SerializeSidecarMessageTxWithPriority(txWithPriority)
 
 	// Send length-delimited message
 	msgLen := uint32(len(data))
@@ -170,6 +198,52 @@ func (ns *NodeSender) SendTxWithPriority(txWithPriority types.TxWithPriority) er
 	}
 
 	log.Info("Sent transaction with priority to node", "tx_bytes", len(txWithPriority.TxBytes), "priority", txWithPriority.Priority[:4])
+	return nil
+}
+
+// SendHeartbeat sends a heartbeat message to the node
+func (ns *NodeSender) SendHeartbeat() error {
+	// Check if connected
+	if !ns.connected.Load() {
+		log.Debug("Not connected to node - skipping heartbeat")
+		return fmt.Errorf("not connected to node")
+	}
+
+	ns.connMu.RLock()
+	conn := ns.conn
+	ns.connMu.RUnlock()
+
+	if conn == nil {
+		log.Debug("Not connected to node - skipping heartbeat")
+		return fmt.Errorf("not connected to node")
+	}
+
+	// Serialize as SidecarMessage::Heartbeat variant
+	data := types.SerializeSidecarMessageHeartbeat()
+
+	// Send length-delimited message
+	msgLen := uint32(len(data))
+	if err := binary.Write(conn, binary.BigEndian, msgLen); err != nil {
+		log.Info("Node connection lost during heartbeat, triggering reconnect", "error", err)
+		ns.connected.Store(false)
+		ns.connMu.Lock()
+		ns.conn = nil
+		ns.connMu.Unlock()
+		ns.triggerReconnect()
+		return fmt.Errorf("failed to write heartbeat message length: %w", err)
+	}
+
+	if _, err := conn.Write(data); err != nil {
+		log.Info("Node connection lost during heartbeat, triggering reconnect", "error", err)
+		ns.connected.Store(false)
+		ns.connMu.Lock()
+		ns.conn = nil
+		ns.connMu.Unlock()
+		ns.triggerReconnect()
+		return fmt.Errorf("failed to send heartbeat to node: %w", err)
+	}
+
+	log.Debug("Sent heartbeat to node")
 	return nil
 }
 
