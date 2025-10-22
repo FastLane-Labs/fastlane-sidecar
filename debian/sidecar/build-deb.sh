@@ -35,7 +35,9 @@ mkdir -p "${DEB_DIR}/lib/systemd/system"
 
 # Build the Go binary
 echo "Building Go binary..."
-CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o "${DEB_DIR}/usr/bin/fastlane-sidecar" ./cmd/sidecar
+CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s -X github.com/FastLane-Labs/fastlane-sidecar/pkg/version.Version=${VERSION}" \
+    -o "${DEB_DIR}/usr/bin/fastlane-sidecar" ./cmd/sidecar
 
 # Make binary executable
 chmod +x "${DEB_DIR}/usr/bin/fastlane-sidecar"

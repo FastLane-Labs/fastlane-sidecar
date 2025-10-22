@@ -27,7 +27,9 @@ mkdir -p "${DEB_DIR}/usr/bin"
 
 # Build the Go binary
 echo "Building Go binary..."
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o "${DEB_DIR}/usr/bin/fastlane-generate-envelope" ./cmd/generate-envelope
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s -X github.com/FastLane-Labs/fastlane-sidecar/pkg/version.Version=${VERSION}" \
+    -o "${DEB_DIR}/usr/bin/fastlane-generate-envelope" ./cmd/generate-envelope
 
 # Make binary executable
 chmod +x "${DEB_DIR}/usr/bin/fastlane-generate-envelope"

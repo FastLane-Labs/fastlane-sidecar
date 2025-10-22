@@ -13,6 +13,7 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/auth"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/config"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
+	"github.com/FastLane-Labs/fastlane-sidecar/pkg/version"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gorilla/websocket"
 )
@@ -429,8 +430,9 @@ func (c *Client) connect() error {
 // sendValidatorRegister sends the validator_register JSON-RPC method
 func (c *Client) sendValidatorRegister() error {
 	params := map[string]interface{}{
-		"sidecar_id":   c.creds.SidecarID,
-		"capabilities": []string{"tx_publish", "auth_refresh_inband"},
+		"sidecar_id":      c.creds.SidecarID,
+		"capabilities":    []string{"tx_publish", "auth_refresh_inband"},
+		"sidecar_version": version.Version,
 	}
 
 	resp, err := c.sendRequest("validator_register", params)
