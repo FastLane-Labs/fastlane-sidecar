@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"net/http"
+	"os/exec"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -164,10 +166,11 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 	}
 
 	stats := health.Stats{
-		LastHeartbeat: lastHeartbeat,
-		TxReceived:    s.txReceived.Load(),
-		TxStreamed:    s.txStreamed.Load(),
-		PoolSize:      s.poolSize.Load(),
+		LastHeartbeat:   lastHeartbeat,
+		TxReceived:      s.txReceived.Load(),
+		TxStreamed:      s.txStreamed.Load(),
+		PoolSize:        s.poolSize.Load(),
+		MonadBftVersion: getMonadBftVersion(),
 	}
 
 	// Add gateway status and update metrics
@@ -516,4 +519,18 @@ func (s *Sidecar) cleanupOldTransactions() {
 			s.metrics.PoolSize.Store(sizeAfter)
 		}
 	}
+}
+
+// getMonadBftVersion attempts to get the monad-bft package version
+func getMonadBftVersion() string {
+	// Try dpkg-query first (most reliable for installed packages)
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "monad-bft")
+	output, err := cmd.Output()
+	if err == nil && len(output) > 0 {
+		return strings.TrimSpace(string(output))
+	}
+
+	// If dpkg-query fails, return empty string
+	// This is expected if monad-bft is not installed via apt
+	return ""
 }

@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"os/exec"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -147,8 +149,9 @@ func (m *Metrics) GetMemoryUsagePercent() float64 {
 
 // Snapshot represents a point-in-time snapshot of all metrics
 type Snapshot struct {
-	Timestamp time.Time `json:"timestamp"`
-	Version   string    `json:"version"`
+	Timestamp       time.Time `json:"timestamp"`
+	Version         string    `json:"version"`
+	MonadBftVersion string    `json:"monad_bft_version,omitempty"`
 
 	// Transaction metrics
 	TxReceivedFromNode    uint64 `json:"tx_received_from_node"`
@@ -209,8 +212,9 @@ func (m *Metrics) GetSnapshot() interface{} {
 	}
 
 	return Snapshot{
-		Timestamp: time.Now().UTC(),
-		Version:   version.Version,
+		Timestamp:       time.Now().UTC(),
+		Version:         version.Version,
+		MonadBftVersion: getMonadBftVersion(),
 
 		// Transaction metrics
 		TxReceivedFromNode:    m.TxReceivedFromNode.Load(),
@@ -261,4 +265,18 @@ func (m *Metrics) GetSnapshot() interface{} {
 		// Heartbeat
 		LastHeartbeat: lastHeartbeat,
 	}
+}
+
+// getMonadBftVersion attempts to get the monad-bft package version
+func getMonadBftVersion() string {
+	// Try dpkg-query first (most reliable for installed packages)
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "monad-bft")
+	output, err := cmd.Output()
+	if err == nil && len(output) > 0 {
+		return strings.TrimSpace(string(output))
+	}
+
+	// If dpkg-query fails, return empty string
+	// This is expected if monad-bft is not installed via apt
+	return ""
 }

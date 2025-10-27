@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
@@ -29,6 +31,7 @@ type Stats struct {
 	GatewayConnected     bool      `json:"gateway_connected"`
 	GatewayAuthenticated bool      `json:"gateway_authenticated"`
 	GatewayError         string    `json:"gateway_error,omitempty"`
+	MonadBftVersion      string    `json:"monad_bft_version,omitempty"`
 }
 
 // Server provides HTTP monitoring endpoints (health and metrics)
@@ -100,9 +103,27 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		response["gateway_error"] = stats.GatewayError
 	}
 
+	if stats.MonadBftVersion != "" {
+		response["monad_bft_version"] = stats.MonadBftVersion
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// getMonadBftVersion attempts to get the monad-bft package version
+func getMonadBftVersion() string {
+	// Try dpkg-query first (most reliable for installed packages)
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "monad-bft")
+	output, err := cmd.Output()
+	if err == nil && len(output) > 0 {
+		return strings.TrimSpace(string(output))
+	}
+
+	// If dpkg-query fails, return empty string
+	// This is expected if monad-bft is not installed via apt
+	return ""
 }
 
 // handleMetrics handles GET /metrics requests
