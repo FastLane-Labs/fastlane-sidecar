@@ -16,7 +16,7 @@ import (
 
 // Keystore represents an encrypted Ethereum-compatible keystore
 type Keystore struct {
-	Version    int          `json:"version,omitempty"` // Version 1: hex string encrypted, Version 2: raw bytes encrypted
+	Version    *int         `json:"version,omitempty"` // Version 1: raw private key, Version 2: IKM (needs derivation), nil/absent: v1 format (raw private key)
 	Ciphertext string       `json:"ciphertext"`
 	Checksum   string       `json:"checksum"`
 	Cipher     CipherParams `json:"cipher"`
@@ -81,8 +81,9 @@ func EncryptKey(privateKey []byte, password string) (*Keystore, error) {
 	h.Write(ciphertext)
 	checksum := h.Sum(nil)
 
+	version := 2
 	return &Keystore{
-		Version:    2, // Version 2: raw bytes encrypted
+		Version:    &version, // Version 2: IKM (raw bytes) encrypted
 		Ciphertext: hex.EncodeToString(ciphertext),
 		Checksum:   hex.EncodeToString(checksum),
 		Cipher: CipherParams{
@@ -156,20 +157,19 @@ func DecryptKey(ks *Keystore, password string) ([]byte, error) {
 
 	// Handle different keystore versions
 	var privateKey []byte
-	if ks.Version == 2 || ks.Version == 0 {
-		// Version 2 (or no version): decrypted bytes are IKM (Input Keying Material)
+	if ks.Version != nil && *ks.Version == 2 {
+		// Version 2: decrypted bytes are IKM (Input Keying Material)
 		// Derive the actual secp256k1 private key from IKM using hash_to_scalar
 		privateKey, err = DeriveSecp256k1Key(decrypted)
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive secp256k1 key from IKM: %w", err)
 		}
+	} else if ks.Version != nil && *ks.Version == 1 {
+		// Version 1 (explicit): raw 32-byte private key
+		privateKey = decrypted
 	} else {
-		// Version 1: hex string encrypted
-		privateKeyHexStr := string(decrypted)
-		privateKey, err = hex.DecodeString(privateKeyHexStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid private key format (version %d, expected hex string): %w", ks.Version, err)
-		}
+		// No version field (v1 format from old monad-keystore): raw 32-byte private key
+		privateKey = decrypted
 	}
 
 	// Validate it's 32 bytes
