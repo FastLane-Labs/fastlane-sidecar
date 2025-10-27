@@ -17,8 +17,7 @@ Restart=always
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-
-RuntimeDirectory=fastlane-sidecar
+ReadWritePaths=/home/monad/fastlane
 
 [Install]
 WantedBy=multi-user.target
