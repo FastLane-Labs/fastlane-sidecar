@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,9 +60,6 @@ type Metrics struct {
 
 	// System metrics collector
 	systemCollector *SystemMetricsCollector
-
-	// Mutex for thread-safe operations
-	mu sync.RWMutex
 }
 
 // Global metrics instance
