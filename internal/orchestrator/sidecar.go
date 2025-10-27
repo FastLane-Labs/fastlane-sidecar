@@ -8,6 +8,7 @@ import (
 
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/health"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/ipc"
+	"github.com/FastLane-Labs/fastlane-sidecar/internal/metrics"
 	monadgateway "github.com/FastLane-Labs/fastlane-sidecar/internal/monad-gateway"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/pool"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/priorities"
@@ -23,7 +24,7 @@ type Sidecar struct {
 	config       *config.Config
 	shutdownChan chan struct{}
 
-	// Statistics
+	// Statistics (kept for backward compatibility, but metrics package is primary source)
 	txReceived    atomic.Uint64
 	bytesTotal    atomic.Uint64
 	txStreamed    atomic.Uint64 // Number of transactions streamed to node with priority
@@ -31,12 +32,13 @@ type Sidecar struct {
 	poolSize      atomic.Uint64 // Current transaction pool size
 
 	// Components
-	nodeListener  *ipc.NodeListener
-	nodeSender    *ipc.NodeSender
-	gatewayClient *monadgateway.Client
-	txPool        *pool.TransactionPool
-	filter        *processor.Filter
-	healthServer  *health.Server
+	nodeListener     *ipc.NodeListener
+	nodeSender       *ipc.NodeSender
+	gatewayClient    *monadgateway.Client
+	txPool           *pool.TransactionPool
+	filter           *processor.Filter
+	monitoringServer *health.Server
+	metrics          *metrics.Metrics
 
 	// Context for cancellation
 	ctx    context.Context
@@ -52,9 +54,12 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
+	// Initialize metrics (must be before gateway client creation)
+	m := metrics.InitMetrics()
+
 	// Create gateway client (handles all credential loading and registration)
 	// Returns nil if gateway is disabled or no credentials provided
-	gatewayClient, err := monadgateway.NewMonadGatewayClient(config)
+	gatewayClient, err := monadgateway.NewMonadGatewayClient(config, m)
 	if err != nil {
 		// Log error but continue without gateway - don't fail sidecar startup
 		log.Error("Failed to create gateway client", "error", err)
@@ -69,13 +74,14 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		gatewayClient: gatewayClient,
 		txPool:        pool.NewTransactionPool(config.PoolMaxDuration),
 		filter:        filter,
+		metrics:       m,
 		ctx:           ctx,
 		cancel:        cancel,
 	}
 
-	// Create health server with adapter
+	// Create monitoring server with both health and metrics endpoints
 	adapter := &healthStatsAdapter{sidecar: s}
-	s.healthServer = health.NewServer(8765, adapter)
+	s.monitoringServer = health.NewServer(config.MonitoringPort, adapter, m)
 
 	return s, nil
 }
@@ -90,10 +96,13 @@ func (a *healthStatsAdapter) GetHealthStats() health.Stats {
 }
 
 func (s *Sidecar) Start() error {
-	// Start health server in background
+	// Start system metrics collection
+	s.metrics.StartSystemMetricsCollection()
+
+	// Start monitoring server in background (serves both /health and /metrics)
 	go func() {
-		if err := s.healthServer.Start(); err != nil && err != http.ErrServerClosed {
-			log.Error("Health server failed", "error", err)
+		if err := s.monitoringServer.Start(); err != nil && err != http.ErrServerClosed {
+			log.Error("Monitoring server failed", "error", err)
 		}
 	}()
 
@@ -106,6 +115,9 @@ func (s *Sidecar) Start() error {
 	if err := s.nodeSender.Connect(); err != nil {
 		return err
 	}
+
+	// Set node connected metric
+	s.metrics.NodeConnected.Store(1)
 
 	// Start gateway connection if client was created
 	if s.gatewayClient != nil {
@@ -135,6 +147,12 @@ func (s *Sidecar) Stop() {
 	if s.gatewayClient != nil {
 		s.gatewayClient.Stop()
 	}
+	if s.metrics != nil {
+		s.metrics.StopSystemMetricsCollection()
+	}
+	if s.monitoringServer != nil {
+		s.monitoringServer.Stop()
+	}
 }
 
 // GetHealthStatsForServer returns health statistics for the HTTP health server
@@ -152,7 +170,7 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		PoolSize:      s.poolSize.Load(),
 	}
 
-	// Add gateway status
+	// Add gateway status and update metrics
 	if s.gatewayClient != nil {
 		gwHealth := s.gatewayClient.Health()
 		stats.GatewayConnected = gwHealth.Connected
@@ -160,9 +178,23 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		if gwHealth.LastError != "" {
 			stats.GatewayError = gwHealth.LastError
 		}
+
+		// Update metrics
+		if gwHealth.Connected {
+			s.metrics.GatewayConnected.Store(1)
+		} else {
+			s.metrics.GatewayConnected.Store(0)
+		}
+		if gwHealth.Authenticated {
+			s.metrics.GatewayAuthenticated.Store(1)
+		} else {
+			s.metrics.GatewayAuthenticated.Store(0)
+		}
 	} else {
 		stats.GatewayConnected = false
 		stats.GatewayAuthenticated = false
+		s.metrics.GatewayConnected.Store(0)
+		s.metrics.GatewayAuthenticated.Store(0)
 		if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
 			stats.GatewayError = "gateway disabled (ingress and egress both disabled)"
 		} else {
@@ -226,6 +258,7 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 		txAdded, ok := data.(types.TxAdded)
 		if !ok {
 			log.Error("Invalid TxAdded data", "source", source)
+			s.metrics.DecodeErrors.Add(1)
 			return
 		}
 
@@ -234,35 +267,56 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 		if txAdded.TimestampMs > 0 {
 			nowMs := uint64(time.Now().UnixMilli())
 			latencyMs = int64(nowMs - txAdded.TimestampMs)
+			// Track node message latency
+			s.metrics.RecordNodeMessageLatency(float64(latencyMs) / 1000.0)
 		}
 
 		log.Info("Received TxAdded message", "bytes", len(txAdded.TxBytes), "source", source, "latency_ms", latencyMs)
 		s.txReceived.Add(1) // Only count actual transactions, not heartbeats
+
+		// Track by source
+		if source == "node" {
+			s.metrics.TxReceivedFromNode.Add(1)
+		} else if source == "gateway" {
+			s.metrics.TxReceivedFromGateway.Add(1)
+		}
+
 		s.handleIncomingTransaction(txAdded.TxBytes, source)
 
 	case "TxDropped":
 		txDropped, ok := data.(types.TxDropped)
 		if !ok {
 			log.Error("Invalid TxDropped data", "source", source)
+			s.metrics.DecodeErrors.Add(1)
 			return
 		}
 		log.Info("Received TxDropped message", "hash", common.BytesToHash(txDropped.TxHash[:]).Hex(), "source", source)
+		s.metrics.TxDropped.Add(1)
 		s.handleTransactionDropped(txDropped.TxHash[:])
 
 	case "Heartbeat":
 		log.Debug("Received Heartbeat message", "source", source)
-		s.lastHeartbeat.Store(time.Now().UnixNano())
+		now := time.Now()
+		s.lastHeartbeat.Store(now.UnixNano())
+		s.metrics.LastHeartbeatTimestamp.Store(now.Unix())
 
 	default:
 		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
 		// Fallback to old behavior for compatibility
 		s.txReceived.Add(1)
+		if source == "node" {
+			s.metrics.TxReceivedFromNode.Add(1)
+		} else if source == "gateway" {
+			s.metrics.TxReceivedFromGateway.Add(1)
+		}
 		s.handleIncomingTransaction(msgBytes, source)
 	}
 }
 
 // handleIncomingTransaction implements the new transaction lifecycle
 func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
+	startTime := time.Now()
+
 	// The txBytes are raw transaction bytes from TxAdded message
 
 	// Decode transaction using UnmarshalBinary which handles both:
@@ -271,6 +325,7 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	var tx ethTypes.Transaction
 	if err := tx.UnmarshalBinary(txBytes); err != nil {
 		log.Error("Failed to decode transaction", "error", err, "source", source)
+		s.metrics.DecodeErrors.Add(1)
 		return
 	}
 
@@ -297,17 +352,29 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 		pooledTx.BidData = bidData
 	}
 
+	// Update pool size metric
+	poolSize := s.txPool.Size()
+	s.poolSize.Store(poolSize)
+	s.metrics.PoolSize.Store(poolSize)
+
 	switch txType {
 	case types.TOBBid:
+		s.metrics.TOBBidsProcessed.Add(1)
 		s.handleTOBBid(txBytes, bidData)
 	case types.BackrunBid:
+		s.metrics.BackrunBidsProcessed.Add(1)
 		s.handleBackrunBid(txBytes, hash, bidData)
 	case types.NormalTransaction:
+		s.metrics.NormalTxsProcessed.Add(1)
 		// Normal transaction - just keep in pool and forward to gateway if from node
 		if source == "node" {
 			s.forwardToGateway(txBytes)
 		}
 	}
+
+	// Track processing latency
+	processingTime := time.Since(startTime).Seconds()
+	s.metrics.RecordTxProcessingLatency(processingTime)
 }
 
 // handleTransactionDropped handles TxDropped messages
@@ -389,6 +456,9 @@ func (s *Sidecar) handleBackrunBid(txBytes []byte, bidHash common.Hash, bidData 
 	}
 	s.streamTransaction(backrunTxWithPriority)
 
+	// Track successful backrun pair match
+	s.metrics.BackrunPairsMatched.Add(1)
+
 	log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String(), "opp_gas_tip", oppGasTip.String())
 }
 
@@ -396,9 +466,11 @@ func (s *Sidecar) handleBackrunBid(txBytes []byte, bidHash common.Hash, bidData 
 func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
 	if err := s.nodeSender.SendTxWithPriority(txWithPriority); err != nil {
 		log.Error("Failed to send transaction to node", "error", err)
+		s.metrics.SendErrors.Add(1)
 		return
 	}
 	s.txStreamed.Add(1)
+	s.metrics.TxSentToNode.Add(1)
 }
 
 // forwardToGateway sends transaction to gateway (if it didn't come from there)
@@ -408,7 +480,10 @@ func (s *Sidecar) forwardToGateway(txBytes []byte) {
 	}
 	if err := s.gatewayClient.SendToGateway(txBytes); err != nil {
 		log.Debug("Failed to send transaction to gateway", "error", err)
+		s.metrics.GatewayErrors.Add(1)
+		return
 	}
+	s.metrics.TxSentToGateway.Add(1)
 }
 
 // cleanupOldTransactions periodically removes old transactions
@@ -423,9 +498,22 @@ func (s *Sidecar) cleanupOldTransactions() {
 			log.Info("Cleanup stopped")
 			return
 		case <-ticker.C:
+			// Track pool size before cleanup
+			sizeBefore := s.txPool.Size()
+
 			s.txPool.CleanupOldTransactions()
+			s.metrics.PoolCleanupOps.Add(1)
+
+			// Calculate how many were removed
+			sizeAfter := s.txPool.Size()
+			if sizeAfter < sizeBefore {
+				expired := sizeBefore - sizeAfter
+				s.metrics.TxExpired.Add(expired)
+			}
+
 			// Update pool size metric
-			s.poolSize.Store(s.txPool.Size())
+			s.poolSize.Store(sizeAfter)
+			s.metrics.PoolSize.Store(sizeAfter)
 		}
 	}
 }

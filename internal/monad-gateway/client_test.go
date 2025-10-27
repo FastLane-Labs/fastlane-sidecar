@@ -14,6 +14,15 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// mockMetricsProvider for testing
+type mockMetricsProvider struct{}
+
+func (m *mockMetricsProvider) GetSnapshot() interface{} {
+	return map[string]interface{}{
+		"test_metric": 123,
+	}
+}
+
 // TestNewMonadGatewayClient_BothDisabled tests that constructor returns nil when both ingress and egress are disabled
 func TestNewMonadGatewayClient_BothDisabled(t *testing.T) {
 	cfg := &config.Config{
@@ -21,7 +30,7 @@ func TestNewMonadGatewayClient_BothDisabled(t *testing.T) {
 		DisableGatewayEgress:  true,
 	}
 
-	client, err := NewMonadGatewayClient(cfg)
+	client, err := NewMonadGatewayClient(cfg, &mockMetricsProvider{})
 	if err != nil {
 		t.Fatalf("Expected no error when both disabled, got: %v", err)
 	}
@@ -41,7 +50,7 @@ func TestNewMonadGatewayClient_NoCredentials(t *testing.T) {
 		KeystorePath:          "",
 	}
 
-	client, err := NewMonadGatewayClient(cfg)
+	client, err := NewMonadGatewayClient(cfg, &mockMetricsProvider{})
 	if err != nil {
 		t.Fatalf("Expected no error when no credentials, got: %v", err)
 	}
