@@ -202,3 +202,101 @@ func TestGenerateEnvelopeWithValidatorKeystore(t *testing.T) {
 		t.Logf("  Signature:        %s...", envelope.Signature[:20])
 	}
 }
+
+// TestV1AndV2KeystoreCompatibility tests that both v1 and v2 keystores work correctly
+func TestV1AndV2KeystoreCompatibility(t *testing.T) {
+	tests := []struct {
+		name           string
+		keystoreJSON   string
+		password       string
+		expectedPubkey string
+	}{
+		{
+			name: "V2 keystore with version field",
+			keystoreJSON: `{
+				"version": 2,
+				"ciphertext": "018cd07d0e6e4ad2651913239141a6bbf3ee23a685b27990fa04bf4db85b432f",
+				"checksum": "2c8efca318594d6cce8610f8c06b70cf4cf0618f6044caac43e79e7c34d02120",
+				"cipher": {
+					"cipher_function": "AES_128_CTR",
+					"params": {"iv": "53758be9ee7195511bbdb67f40764793"}
+				},
+				"kdf": {
+					"kdf_name": "scrypt",
+					"params": {
+						"salt": "a44f82a954a9373cb1d89a62919be28d619a9bc797ed73fc023f6c6b6bba8714",
+						"key_len": 32,
+						"n": 262144,
+						"r": 8,
+						"p": 1
+					}
+				},
+				"hash": "SHA256"
+			}`,
+			password:       "oYJCOagIvRn925MRWEc4DttR9tMz6AI5",
+			expectedPubkey: "0x03529479026556df5f269b99111d7600512615077f22f45b5ab5c89b6967bdcf97",
+		},
+		{
+			name: "V1 keystore without version field (legacy)",
+			keystoreJSON: `{
+				"ciphertext": "99b64c3181d593c02c4bf7c60a939449c1b4c37a07d01718a3cf0741e3f8f21a",
+				"checksum": "c745c744bcb4b5e203ca55e242f98379cfcb227ff2c46c2c1816272c39c15c8a",
+				"cipher": {
+					"cipher_function": "AES_128_CTR",
+					"params": {"iv": "0508bb5322f0155bb99820a3b5a19ada"}
+				},
+				"kdf": {
+					"kdf_name": "scrypt",
+					"params": {
+						"salt": "5d122f6aa6051c7b939f6b4aeba553383733a35a3e126f03d6dc62dc53c5d768",
+						"key_len": 32,
+						"n": 262144,
+						"r": 8,
+						"p": 1
+					}
+				},
+				"hash": "SHA256"
+			}`,
+			password:       "svyjcHPpzAGxTQNv4KyT",
+			expectedPubkey: "0x036bbe3fb4fbef8e6734458ce617addedfeadc4228322c71800cfc30f6d45d4736",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temporary keystore file
+			tempDir := t.TempDir()
+			keystorePath := filepath.Join(tempDir, "test-keystore.json")
+
+			if err := os.WriteFile(keystorePath, []byte(tt.keystoreJSON), 0600); err != nil {
+				t.Fatalf("Failed to write keystore: %v", err)
+			}
+
+			// Load and decrypt keystore
+			ks, err := keystore.LoadKeystore(keystorePath)
+			if err != nil {
+				t.Fatalf("Failed to load keystore: %v", err)
+			}
+
+			privKeyBytes, err := keystore.DecryptKey(ks, tt.password)
+			if err != nil {
+				t.Fatalf("Failed to decrypt keystore: %v", err)
+			}
+
+			// Convert to ECDSA key and get public key
+			key, err := crypto.ToECDSA(privKeyBytes)
+			if err != nil {
+				t.Fatalf("Failed to convert to ECDSA key: %v", err)
+			}
+
+			pubkey := "0x" + hex.EncodeToString(crypto.CompressPubkey(&key.PublicKey))
+
+			// Verify it matches expected
+			if pubkey != tt.expectedPubkey {
+				t.Errorf("Public key mismatch!\n  Got:      %s\n  Expected: %s", pubkey, tt.expectedPubkey)
+			} else {
+				t.Logf("✓ Correct public key: %s", pubkey)
+			}
+		})
+	}
+}
