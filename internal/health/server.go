@@ -92,7 +92,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"gateway_connected":     stats.GatewayConnected,
 		"gateway_authenticated": stats.GatewayAuthenticated,
 		"timestamp":             time.Now().UTC().Format(time.RFC3339),
-		"note":                  "For detailed metrics, see /metrics endpoint (Prometheus format)",
 		// Include basic stats for backward compatibility
 		"tx_received": stats.TxReceived,
 		"tx_streamed": stats.TxStreamed,
@@ -112,18 +111,26 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// getMonadBftVersion attempts to get the monad-bft package version
+// getMonadBftVersion attempts to get the monad package version
 func getMonadBftVersion() string {
-	// Try dpkg-query first (most reliable for installed packages)
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "monad-bft")
+	// Try monad-fastlane first (FastLane version)
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "monad-fastlane")
 	output, err := cmd.Output()
 	if err == nil && len(output) > 0 {
-		return strings.TrimSpace(string(output))
+		version := strings.TrimSpace(string(output))
+		return "monad-fastlane: " + version
 	}
 
-	// If dpkg-query fails, return empty string
-	// This is expected if monad-bft is not installed via apt
-	return ""
+	// Try monad (standard version)
+	cmd = exec.Command("dpkg-query", "-W", "-f=${Version}", "monad")
+	output, err = cmd.Output()
+	if err == nil && len(output) > 0 {
+		version := strings.TrimSpace(string(output))
+		return "monad: " + version
+	}
+
+	// If both fail, return unknown
+	return "unknown"
 }
 
 // handleMetrics handles GET /metrics requests
