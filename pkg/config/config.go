@@ -51,6 +51,9 @@ type Config struct {
 	// Gateway control
 	DisableGatewayIngress bool // Disable receiving transactions from gateway
 	DisableGatewayEgress  bool // Disable sending transactions to gateway
+
+	// Monitoring configuration
+	MonitoringPort int // HTTP port for monitoring endpoints (/health and /metrics)
 }
 
 func NewConfig() *Config {
@@ -109,7 +112,7 @@ func NewConfig() *Config {
 	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level (debug, info, warn, error)")
 	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
 	fs.StringVar(&gatewayURLOverride, "gateway-url", "", "Override HTTP URL for MEV gateway (optional, uses network default if not set)")
-	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 60000, "Maximum time to hold transactions in pool (ms)")
+	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 2500, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
 	fs.IntVar(&streamingDelayMs, "streaming-delay-ms", 100, "Delay before streaming auction results (ms)")
 	fs.StringVar(&conf.DelegationPath, "delegation", "delegation-envelope.json", "Delegation envelope JSON filename (relative to home)")
@@ -119,6 +122,7 @@ func NewConfig() *Config {
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional, uses network default if not set)")
 	fs.BoolVar(&conf.DisableGatewayIngress, "disable-gateway-ingress", false, "Disable receiving transactions from gateway")
 	fs.BoolVar(&conf.DisableGatewayEgress, "disable-gateway-egress", false, "Disable sending transactions to gateway")
+	fs.IntVar(&conf.MonitoringPort, "monitoring-port", 8765, "HTTP port for monitoring endpoints (/health and /metrics)")
 
 	fs.Parse(os.Args[1:])
 

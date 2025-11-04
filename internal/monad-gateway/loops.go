@@ -109,6 +109,9 @@ func (c *Client) handleNotification(notif jsonRPCNotification) error {
 	case "validator_rate_limited":
 		return c.handleRateLimited(notif.Params)
 
+	case "sidecar_metrics":
+		return c.handleMetricsRequest()
+
 	default:
 		log.Debug("Unknown notification method", "method", notif.Method)
 	}
@@ -259,6 +262,30 @@ func (c *Client) handleRateLimited(params json.RawMessage) error {
 		log.Warn("Gateway rate limit signal received", "retry_after_ms", retryAfter)
 	}
 
+	return nil
+}
+
+// handleMetricsRequest handles metrics request from gateway and sends metrics back
+func (c *Client) handleMetricsRequest() error {
+	if c.metricsProvider == nil {
+		log.Warn("Metrics provider not configured, cannot respond to metrics request")
+		return fmt.Errorf("metrics provider not configured")
+	}
+
+	snapshot := c.metricsProvider.GetSnapshot()
+
+	// Send metrics to gateway using validator_send_metrics method
+	params := map[string]interface{}{
+		"metrics": snapshot,
+	}
+
+	_, err := c.sendRequest("validator_send_metrics", params)
+	if err != nil {
+		log.Error("Failed to send metrics to gateway", "error", err)
+		return err
+	}
+
+	log.Debug("Successfully sent metrics to gateway")
 	return nil
 }
 

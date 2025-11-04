@@ -17,6 +17,15 @@ func (m *mockStatsProvider) GetHealthStats() Stats {
 	return m.stats
 }
 
+// mockMetricsProvider implements MetricsProvider for testing
+type mockMetricsProvider struct{}
+
+func (m *mockMetricsProvider) GetSnapshot() interface{} {
+	return map[string]interface{}{
+		"test_metric": 123,
+	}
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	// Create mock stats
 	now := time.Now()
@@ -33,7 +42,7 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 
 	// Create server
-	server := NewServer(0, mockProvider) // Port 0 for testing
+	server := NewServer(0, mockProvider, &mockMetricsProvider{}) // Port 0 for testing
 
 	// Create test request
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -113,7 +122,7 @@ func TestHealthEndpoint_MethodNotAllowed(t *testing.T) {
 		stats: Stats{},
 	}
 
-	server := NewServer(0, mockProvider)
+	server := NewServer(0, mockProvider, &mockMetricsProvider{})
 
 	// Test POST method (should be rejected)
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
@@ -140,7 +149,7 @@ func TestHealthEndpoint_WithZeroValues(t *testing.T) {
 		},
 	}
 
-	server := NewServer(0, mockProvider)
+	server := NewServer(0, mockProvider, &mockMetricsProvider{})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()

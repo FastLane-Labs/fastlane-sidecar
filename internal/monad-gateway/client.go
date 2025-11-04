@@ -24,6 +24,11 @@ type HealthStats struct {
 	LastError     string `json:"last_error,omitempty"`
 }
 
+// MetricsProvider interface for components that can provide metrics snapshots
+type MetricsProvider interface {
+	GetSnapshot() interface{}
+}
+
 // Client represents a connection to the Monad MEV Gateway
 type Client struct {
 	config *config.Config
@@ -52,6 +57,9 @@ type Client struct {
 	// JSON-RPC
 	msgID           atomic.Int64
 	pendingRequests sync.Map // map[int64]chan *jsonRPCResponse
+
+	// Metrics provider
+	metricsProvider MetricsProvider
 }
 
 // jsonRPCRequest represents a JSON-RPC 2.0 request
@@ -88,7 +96,7 @@ type jsonRPCNotification struct {
 // Call Start() to register and connect
 // Returns nil if gateway is disabled (both ingress and egress disabled)
 // Returns nil if credentials are not provided (no delegation or keystore paths)
-func NewMonadGatewayClient(cfg *config.Config) (*Client, error) {
+func NewMonadGatewayClient(cfg *config.Config, metricsProvider MetricsProvider) (*Client, error) {
 	// Check if gateway is disabled
 	if cfg.DisableGatewayIngress && cfg.DisableGatewayEgress {
 		log.Info("Gateway connection disabled (ingress and egress both disabled)")
@@ -134,10 +142,11 @@ func NewMonadGatewayClient(cfg *config.Config) (*Client, error) {
 
 	// Create client with default buffer size (will be updated after registration)
 	client := &Client{
-		config:    cfg,
-		creds:     creds,
-		regClient: regClient,
-		txChan:    make(chan []byte, 100), // Default buffer, updated after registration
+		config:          cfg,
+		creds:           creds,
+		regClient:       regClient,
+		txChan:          make(chan []byte, 100), // Default buffer, updated after registration
+		metricsProvider: metricsProvider,
 	}
 
 	return client, nil
