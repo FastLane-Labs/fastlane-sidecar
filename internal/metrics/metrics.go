@@ -213,7 +213,7 @@ func (m *Metrics) GetSnapshot() interface{} {
 
 	return Snapshot{
 		Timestamp:       time.Now().UTC(),
-		Version:         version.Version,
+		Version:         getSidecarVersion(),
 		MonadBftVersion: getMonadBftVersion(),
 
 		// Transaction metrics
@@ -265,6 +265,22 @@ func (m *Metrics) GetSnapshot() interface{} {
 		// Heartbeat
 		LastHeartbeat: lastHeartbeat,
 	}
+}
+
+// getSidecarVersion returns the sidecar version combining hardcoded and dpkg versions
+func getSidecarVersion() string {
+	hardcoded := version.Version
+
+	// Try to get dpkg package version
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "fastlane-sidecar")
+	output, err := cmd.Output()
+	if err == nil && len(output) > 0 {
+		dpkgVersion := strings.TrimSpace(string(output))
+		return hardcoded + "-" + dpkgVersion
+	}
+
+	// If dpkg query fails, return hardcoded-unknown
+	return hardcoded + "-unknown"
 }
 
 // getMonadBftVersion attempts to get the monad package version
