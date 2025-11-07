@@ -281,53 +281,6 @@ docker run -d \
   -home=/home/monad/fastlane/
 ```
 
-### 2. Delegation Envelope Generator
-
-A utility tool to generate delegation envelopes and sidecar keystores for authentication with the MEV gateway.
-
-**Build:**
-```bash
-# Build the generator binary
-go build -o generate-envelope ./cmd/generate-envelope
-
-# Run the tool
-./generate-envelope --help
-```
-
-**Usage Examples:**
-
-Generate a delegation envelope with a new sidecar keystore:
-```bash
-# Generate unsigned delegation (requires gateway approval)
-./generate-envelope \
-  --network testnet \
-  --home /home/monad/fastlane \
-  --validator-pubkey 0x03abc...def \
-  --sidecar-password "your-secure-password"
-
-# Generate signed delegation with validator keystore
-./generate-envelope \
-  --network testnet \
-  --home /home/monad/fastlane \
-  --validator-keystore /path/to/validator-keystore.json \
-  --sidecar-password "your-secure-password"
-```
-
-**Output Files:**
-- `delegation-envelope.json` - Delegation document for MEV gateway authentication
-- `sidecar-keystore.json` - Encrypted keystore containing the sidecar's private key
-
-**Available Flags:**
-- `--home` - FastLane home directory (default: `/home/monad/fastlane`)
-- `--network` - Network (testnet, testnet-2, mainnet) (default: `testnet`)
-- `--validator-pubkey` - Validator public key (compressed, 33 bytes, 0x-prefixed)
-- `--validator-keystore` - Path to validator keystore file for signed delegations
-- `--validator-password` - Password for validator keystore (will prompt if not provided)
-- `--sidecar-password` - Password for sidecar keystore (required)
-- `--output` - Output delegation envelope file (default: `<home>/delegation-envelope.json`)
-
-**Note:** Use either `--validator-pubkey` (unsigned) OR `--validator-keystore` (signed), not both.
-
 ## Health Endpoint
 
 The sidecar exposes a health endpoint for monitoring its status.

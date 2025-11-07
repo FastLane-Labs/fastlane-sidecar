@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        binary: [sidecar, generate-envelope]
+        binary: [sidecar]
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
         exclude:
