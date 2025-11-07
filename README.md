@@ -207,7 +207,6 @@ fastlane-sidecar \
 - `-log-level` - Log level: debug, info, warn, error (default: `debug`)
 - `-pool-max-duration-ms` - Max time to hold transactions in pool (default: `60000`)
 - `-auction-cycle-ms` - Auction cycle interval (default: `200`)
-- `-streaming-delay-ms` - Delay before streaming auction results (default: `100`)
 - `-delegation` - Delegation envelope JSON filename relative to home (default: `delegation-envelope.json`)
 - `-keystore` - Sidecar keystore filename relative to home (default: `sidecar-keystore.json`)
 - `-password-file` - Path to file containing keystore password (optional)

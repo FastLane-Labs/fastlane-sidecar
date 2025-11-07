@@ -23,7 +23,6 @@ type Config struct {
 	SidecarToNodeSocketPath string // Derived from HomePath + ".sidecar_to_node"
 	PoolMaxDuration         time.Duration
 	AuctionCycleTime        time.Duration
-	StreamingDelay          time.Duration
 	FastlaneContract        string // Hex address of the fastlane auction contract
 
 	// Monitoring configuration
@@ -34,7 +33,6 @@ func NewConfig() *Config {
 	var conf Config
 	var poolMaxDurationMs int
 	var auctionCycleMs int
-	var streamingDelayMs int
 	var contractOverride string
 
 	fs := flag.NewFlagSet("UserConfig", flag.ExitOnError)
@@ -68,7 +66,6 @@ func NewConfig() *Config {
 	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 2500, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
-	fs.IntVar(&streamingDelayMs, "streaming-delay-ms", 100, "Delay before streaming auction results (ms)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional)")
 	fs.IntVar(&conf.MonitoringPort, "monitoring-port", 8765, "HTTP port for monitoring endpoints (/health and /metrics)")
 
@@ -76,7 +73,6 @@ func NewConfig() *Config {
 
 	conf.PoolMaxDuration = time.Duration(poolMaxDurationMs) * time.Millisecond
 	conf.AuctionCycleTime = time.Duration(auctionCycleMs) * time.Millisecond
-	conf.StreamingDelay = time.Duration(streamingDelayMs) * time.Millisecond
 
 	// Derive socket paths from home directory
 	conf.NodeToSidecarSocketPath = filepath.Join(conf.HomePath, NodeToSidecarSuffix)
