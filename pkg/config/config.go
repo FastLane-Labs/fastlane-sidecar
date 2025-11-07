@@ -13,11 +13,15 @@ const (
 	SidecarToNodeSuffix = "sidecar_to_node"
 )
 
-// FastlaneContractAddress is the address of the FastLaneAuctionHandler contract
-const FastlaneContractAddress = "0xb3688810bbd755808979BDaB1592bFb69b78A033"
+// FastlaneContractAddresses maps network names to their FastLaneAuctionHandler contract addresses
+var FastlaneContractAddresses = map[string]string{
+	"testnet": "0xb3688810bbd755808979BDaB1592bFb69b78A033",
+	"mainnet": "0x0000000000000000000000000000000000000000",
+}
 
 type Config struct {
 	LogLevel                string
+	Network                 string
 	HomePath                string
 	NodeToSidecarSocketPath string // Derived from HomePath + ".node_to_sidecar"
 	SidecarToNodeSocketPath string // Derived from HomePath + ".sidecar_to_node"
@@ -57,11 +61,14 @@ func NewConfig() *Config {
 		fmt.Fprintf(os.Stderr, "  %s\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Run with custom home directory\n")
 		fmt.Fprintf(os.Stderr, "  %s -home=/var/lib/fastlane/\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  # Run on mainnet\n")
+		fmt.Fprintf(os.Stderr, "  %s -network=mainnet\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Run with info logging\n")
 		fmt.Fprintf(os.Stderr, "  %s -log-level=info\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "For more information, visit: https://github.com/FastLane-Labs/fastlane-sidecar\n")
 	}
 
+	fs.StringVar(&conf.Network, "network", "testnet", "Network name: testnet, mainnet")
 	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level (debug, info, warn, error)")
 	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 2500, "Maximum time to hold transactions in pool (ms)")
@@ -71,6 +78,12 @@ func NewConfig() *Config {
 
 	fs.Parse(os.Args[1:])
 
+	// Validate network parameter
+	if conf.Network != "testnet" && conf.Network != "mainnet" {
+		fmt.Fprintf(os.Stderr, "Error: network must be either 'testnet' or 'mainnet', got '%s'\n", conf.Network)
+		os.Exit(1)
+	}
+
 	conf.PoolMaxDuration = time.Duration(poolMaxDurationMs) * time.Millisecond
 	conf.AuctionCycleTime = time.Duration(auctionCycleMs) * time.Millisecond
 
@@ -78,11 +91,11 @@ func NewConfig() *Config {
 	conf.NodeToSidecarSocketPath = filepath.Join(conf.HomePath, NodeToSidecarSuffix)
 	conf.SidecarToNodeSocketPath = filepath.Join(conf.HomePath, SidecarToNodeSuffix)
 
-	// Set fastlane contract address
+	// Set fastlane contract address based on network
 	if contractOverride != "" {
 		conf.FastlaneContract = contractOverride
 	} else {
-		conf.FastlaneContract = FastlaneContractAddress
+		conf.FastlaneContract = FastlaneContractAddresses[conf.Network]
 	}
 
 	return &conf

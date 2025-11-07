@@ -200,18 +200,13 @@ fastlane-sidecar \
 
 ### Configuration Flags
 
-- `-network` - Network name: testnet, testnet-2, mainnet (default: `testnet`)
+- `-network` - Network name: testnet, mainnet (default: `testnet`)
 - `-fastlane-contract` - Override fastlane contract address (optional, uses network default if not set)
 - `-home` - Fastlane home directory (default: `/home/monad/fastlane/`)
-- `-gateway-url` - Override HTTP URL for MEV gateway (optional, uses network default if not set)
 - `-log-level` - Log level: debug, info, warn, error (default: `debug`)
-- `-pool-max-duration-ms` - Max time to hold transactions in pool (default: `60000`)
+- `-pool-max-duration-ms` - Maximum time to hold transactions in pool (default: `2500`)
 - `-auction-cycle-ms` - Auction cycle interval (default: `200`)
-- `-delegation` - Delegation envelope JSON filename relative to home (default: `delegation-envelope.json`)
-- `-keystore` - Sidecar keystore filename relative to home (default: `sidecar-keystore.json`)
-- `-password-file` - Path to file containing keystore password (optional)
-- `-disable-gateway-ingress` - Disable receiving transactions from gateway (default: `false`)
-- `-disable-gateway-egress` - Disable sending transactions to gateway (default: `false`)
+- `-monitoring-port` - HTTP port for monitoring endpoints (/health and /metrics) (default: `8765`)
 
 ### Example systemd Configuration
 
@@ -223,8 +218,7 @@ sudo systemctl edit fastlane-sidecar
 ExecStart=
 ExecStart=/usr/bin/fastlane-sidecar \
   -log-level=info \
-  -network=testnet-2 \
-  -gateway-url=https://gateway.example.com
+  -network=mainnet
 ```
 
 ## Security
