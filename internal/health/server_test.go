@@ -31,13 +31,10 @@ func TestHealthEndpoint(t *testing.T) {
 	now := time.Now()
 	mockProvider := &mockStatsProvider{
 		stats: Stats{
-			LastHeartbeat:        now,
-			TxReceived:           100,
-			TxStreamed:           50,
-			PoolSize:             25,
-			GatewayConnected:     true,
-			GatewayAuthenticated: true,
-			GatewayError:         "",
+			LastHeartbeat: now,
+			TxReceived:    100,
+			TxStreamed:    50,
+			PoolSize:      25,
 		},
 	}
 
@@ -101,20 +98,6 @@ func TestHealthEndpoint(t *testing.T) {
 		}
 	}
 
-	// Verify gateway_connected field
-	if gatewayConnected, ok := response["gateway_connected"].(bool); !ok || !gatewayConnected {
-		t.Errorf("Expected gateway_connected true, got %v", response["gateway_connected"])
-	}
-
-	// Verify gateway_authenticated field
-	if gatewayAuthenticated, ok := response["gateway_authenticated"].(bool); !ok || !gatewayAuthenticated {
-		t.Errorf("Expected gateway_authenticated true, got %v", response["gateway_authenticated"])
-	}
-
-	// Verify gateway_error is not present when empty
-	if _, exists := response["gateway_error"]; exists {
-		t.Errorf("Expected gateway_error to be omitted when empty")
-	}
 }
 
 func TestHealthEndpoint_MethodNotAllowed(t *testing.T) {

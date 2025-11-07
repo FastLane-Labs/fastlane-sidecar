@@ -11,7 +11,6 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/health"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/ipc"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/metrics"
-	monadgateway "github.com/FastLane-Labs/fastlane-sidecar/internal/monad-gateway"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/pool"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/priorities"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/processor"
@@ -36,7 +35,6 @@ type Sidecar struct {
 	// Components
 	nodeListener     *ipc.NodeListener
 	nodeSender       *ipc.NodeSender
-	gatewayClient    *monadgateway.Client
 	txPool           *pool.TransactionPool
 	filter           *processor.Filter
 	monitoringServer *health.Server
@@ -56,29 +54,19 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
-	// Initialize metrics (must be before gateway client creation)
+	// Initialize metrics
 	m := metrics.InitMetrics()
 
-	// Create gateway client (handles all credential loading and registration)
-	// Returns nil if gateway is disabled or no credentials provided
-	gatewayClient, err := monadgateway.NewMonadGatewayClient(config, m)
-	if err != nil {
-		// Log error but continue without gateway - don't fail sidecar startup
-		log.Error("Failed to create gateway client", "error", err)
-		gatewayClient = nil
-	}
-
 	s := &Sidecar{
-		config:        config,
-		shutdownChan:  shutdownChan,
-		nodeListener:  ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
-		nodeSender:    ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
-		gatewayClient: gatewayClient,
-		txPool:        pool.NewTransactionPool(config.PoolMaxDuration),
-		filter:        filter,
-		metrics:       m,
-		ctx:           ctx,
-		cancel:        cancel,
+		config:       config,
+		shutdownChan: shutdownChan,
+		nodeListener: ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
+		nodeSender:   ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
+		txPool:       pool.NewTransactionPool(config.PoolMaxDuration),
+		filter:       filter,
+		metrics:      m,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	// Create monitoring server with both health and metrics endpoints
@@ -121,18 +109,8 @@ func (s *Sidecar) Start() error {
 	// Set node connected metric
 	s.metrics.NodeConnected.Store(1)
 
-	// Start gateway connection if client was created
-	if s.gatewayClient != nil {
-		log.Info("Starting gateway connection")
-		if err := s.gatewayClient.Start(); err != nil {
-			log.Error("Failed to start gateway client", "error", err)
-			// Don't fail startup, gateway will retry in background
-		}
-	}
-
 	// Start processing goroutines
 	go s.processNodeTransactions()
-	go s.processGatewayTransactions()
 	go s.cleanupOldTransactions()
 
 	return nil
@@ -145,9 +123,6 @@ func (s *Sidecar) Stop() {
 	}
 	if s.nodeSender != nil {
 		s.nodeSender.Close()
-	}
-	if s.gatewayClient != nil {
-		s.gatewayClient.Stop()
 	}
 	if s.metrics != nil {
 		s.metrics.StopSystemMetricsCollection()
@@ -165,47 +140,13 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
 	}
 
-	stats := health.Stats{
+	return health.Stats{
 		LastHeartbeat:   lastHeartbeat,
 		TxReceived:      s.txReceived.Load(),
 		TxStreamed:      s.txStreamed.Load(),
 		PoolSize:        s.poolSize.Load(),
 		MonadBftVersion: getMonadBftVersion(),
 	}
-
-	// Add gateway status and update metrics
-	if s.gatewayClient != nil {
-		gwHealth := s.gatewayClient.Health()
-		stats.GatewayConnected = gwHealth.Connected
-		stats.GatewayAuthenticated = gwHealth.Authenticated
-		if gwHealth.LastError != "" {
-			stats.GatewayError = gwHealth.LastError
-		}
-
-		// Update metrics
-		if gwHealth.Connected {
-			s.metrics.GatewayConnected.Store(1)
-		} else {
-			s.metrics.GatewayConnected.Store(0)
-		}
-		if gwHealth.Authenticated {
-			s.metrics.GatewayAuthenticated.Store(1)
-		} else {
-			s.metrics.GatewayAuthenticated.Store(0)
-		}
-	} else {
-		stats.GatewayConnected = false
-		stats.GatewayAuthenticated = false
-		s.metrics.GatewayConnected.Store(0)
-		s.metrics.GatewayAuthenticated.Store(0)
-		if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
-			stats.GatewayError = "gateway disabled (ingress and egress both disabled)"
-		} else {
-			stats.GatewayError = "gateway not initialized"
-		}
-	}
-
-	return stats
 }
 
 // processNodeTransactions handles transactions from the node
@@ -221,32 +162,6 @@ func (s *Sidecar) processNodeTransactions() {
 			return
 		case msgBytes := <-txChan:
 			s.handleIncomingMessage(msgBytes, "node")
-		}
-	}
-}
-
-// processGatewayTransactions handles transactions from the gateway
-func (s *Sidecar) processGatewayTransactions() {
-	if s.gatewayClient == nil {
-		log.Info("Gateway client not initialized, not processing gateway transactions")
-		return
-	}
-
-	if s.config.DisableGatewayIngress {
-		log.Info("Gateway ingress disabled, not processing gateway transactions")
-		return
-	}
-
-	gatewayTxChan := s.gatewayClient.GetTransactionChannel()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Info("Gateway transaction processing stopped")
-			return
-		case txBytes := <-gatewayTxChan:
-			// Gateway sends raw RLP transaction bytes, not FastlaneMessage enums
-			s.handleIncomingTransaction(txBytes, "gateway")
 		}
 	}
 }
@@ -276,13 +191,7 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 
 		log.Info("Received TxAdded message", "bytes", len(txAdded.TxBytes), "source", source, "latency_ms", latencyMs)
 		s.txReceived.Add(1) // Only count actual transactions, not heartbeats
-
-		// Track by source
-		if source == "node" {
-			s.metrics.TxReceivedFromNode.Add(1)
-		} else if source == "gateway" {
-			s.metrics.TxReceivedFromGateway.Add(1)
-		}
+		s.metrics.TxReceivedFromNode.Add(1)
 
 		s.handleIncomingTransaction(txAdded.TxBytes, source)
 
@@ -307,11 +216,7 @@ func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
 		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
 		// Fallback to old behavior for compatibility
 		s.txReceived.Add(1)
-		if source == "node" {
-			s.metrics.TxReceivedFromNode.Add(1)
-		} else if source == "gateway" {
-			s.metrics.TxReceivedFromGateway.Add(1)
-		}
+		s.metrics.TxReceivedFromNode.Add(1)
 		s.handleIncomingTransaction(msgBytes, source)
 	}
 }
@@ -369,10 +274,7 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 		s.handleBackrunBid(txBytes, hash, bidData)
 	case types.NormalTransaction:
 		s.metrics.NormalTxsProcessed.Add(1)
-		// Normal transaction - just keep in pool and forward to gateway if from node
-		if source == "node" {
-			s.forwardToGateway(txBytes)
-		}
+		// Normal transaction - just keep in pool
 	}
 
 	// Track processing latency
@@ -393,13 +295,6 @@ func (s *Sidecar) handleTransactionDropped(txHashBytes []byte) {
 	removedTx := s.txPool.RemoveTransaction(txHash)
 	if removedTx != nil {
 		log.Info("Transaction dropped by node and removed from pool", "hash", txHash.Hex(), "source", removedTx.Source)
-
-		// Notify gateway about the dropped transaction if it didn't come from gateway
-		if s.gatewayClient != nil && removedTx.Source != "gateway" {
-			if err := s.gatewayClient.NotifyTransactionDropped(txHash); err != nil {
-				log.Debug("Failed to notify gateway of dropped transaction", "error", err, "hash", txHash.Hex())
-			}
-		}
 	} else {
 		log.Info("Transaction dropped by node but not found in pool", "hash", txHash.Hex())
 	}
@@ -474,19 +369,6 @@ func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
 	}
 	s.txStreamed.Add(1)
 	s.metrics.TxSentToNode.Add(1)
-}
-
-// forwardToGateway sends transaction to gateway (if it didn't come from there)
-func (s *Sidecar) forwardToGateway(txBytes []byte) {
-	if s.gatewayClient == nil {
-		return // Gateway client not initialized
-	}
-	if err := s.gatewayClient.SendToGateway(txBytes); err != nil {
-		log.Debug("Failed to send transaction to gateway", "error", err)
-		s.metrics.GatewayErrors.Add(1)
-		return
-	}
-	s.metrics.TxSentToGateway.Add(1)
 }
 
 // cleanupOldTransactions periodically removes old transactions

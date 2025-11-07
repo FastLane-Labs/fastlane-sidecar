@@ -24,14 +24,11 @@ type MetricsProvider interface {
 
 // Stats contains sidecar health status
 type Stats struct {
-	LastHeartbeat        time.Time `json:"last_heartbeat"`
-	TxReceived           uint64    `json:"tx_received"` // Kept for backward compatibility
-	TxStreamed           uint64    `json:"tx_streamed"` // Kept for backward compatibility
-	PoolSize             uint64    `json:"pool_size"`   // Kept for backward compatibility
-	GatewayConnected     bool      `json:"gateway_connected"`
-	GatewayAuthenticated bool      `json:"gateway_authenticated"`
-	GatewayError         string    `json:"gateway_error,omitempty"`
-	MonadBftVersion      string    `json:"monad_bft_version,omitempty"`
+	LastHeartbeat   time.Time `json:"last_heartbeat"`
+	TxReceived      uint64    `json:"tx_received"` // Kept for backward compatibility
+	TxStreamed      uint64    `json:"tx_streamed"` // Kept for backward compatibility
+	PoolSize        uint64    `json:"pool_size"`   // Kept for backward compatibility
+	MonadBftVersion string    `json:"monad_bft_version,omitempty"`
 }
 
 // Server provides HTTP monitoring endpoints (health and metrics)
@@ -86,20 +83,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"status":                "ok",
-		"healthy":               healthy,
-		"last_heartbeat":        stats.LastHeartbeat.Format(time.RFC3339),
-		"gateway_connected":     stats.GatewayConnected,
-		"gateway_authenticated": stats.GatewayAuthenticated,
-		"timestamp":             time.Now().UTC().Format(time.RFC3339),
+		"status":         "ok",
+		"healthy":        healthy,
+		"last_heartbeat": stats.LastHeartbeat.Format(time.RFC3339),
+		"timestamp":      time.Now().UTC().Format(time.RFC3339),
 		// Include basic stats for backward compatibility
 		"tx_received": stats.TxReceived,
 		"tx_streamed": stats.TxStreamed,
 		"pool_size":   stats.PoolSize,
-	}
-
-	if stats.GatewayError != "" {
-		response["gateway_error"] = stats.GatewayError
 	}
 
 	if stats.MonadBftVersion != "" {
