@@ -103,9 +103,6 @@ func (c *Client) handleNotification(notif jsonRPCNotification) error {
 	case "validator_auth_expiring":
 		return c.handleAuthExpiring(notif.Params)
 
-	case "validator_rate_limited":
-		return c.handleRateLimited(notif.Params)
-
 	case "sidecar_metrics":
 		return c.handleMetricsRequest()
 
@@ -170,27 +167,6 @@ func (c *Client) handleAuthExpiring(params json.RawMessage) error {
 	}
 
 	log.Info("Successfully refreshed tokens in-band")
-	return nil
-}
-
-// handleRateLimited handles rate limit notifications
-func (c *Client) handleRateLimited(params json.RawMessage) error {
-	var paramsMap map[string]interface{}
-	if err := json.Unmarshal(params, &paramsMap); err != nil {
-		// Not critical, just log
-		log.Warn("Invalid rate limit params", "error", err)
-		return nil
-	}
-
-	retryAfter, _ := paramsMap["retry_after_ms"].(float64)
-	reason, _ := paramsMap["reason"].(string)
-
-	if reason != "" {
-		log.Warn("Gateway rate limit signal received", "reason", reason, "retry_after_ms", retryAfter)
-	} else {
-		log.Warn("Gateway rate limit signal received", "retry_after_ms", retryAfter)
-	}
-
 	return nil
 }
 

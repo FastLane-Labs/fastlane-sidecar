@@ -88,41 +88,6 @@ func TestHandleAuthExpiring_WithChallenge(t *testing.T) {
 	t.Skip("Skipping test that requires sidecar key generation - needs proper auth setup")
 }
 
-// TestHandleRateLimited tests rate limit notification handling
-func TestHandleRateLimited(t *testing.T) {
-	client := &Client{
-		config: &config.Config{},
-	}
-
-	tests := []struct {
-		name   string
-		params string
-	}{
-		{
-			name:   "with reason",
-			params: `{"retry_after_ms": 1000, "reason": "too many requests"}`,
-		},
-		{
-			name:   "without reason",
-			params: `{"retry_after_ms": 500}`,
-		},
-		{
-			name:   "invalid params",
-			params: `{invalid}`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Should not error, just log
-			err := client.handleRateLimited(json.RawMessage(tt.params))
-			if err != nil {
-				t.Errorf("Expected no error, got: %v", err)
-			}
-		})
-	}
-}
-
 // TestHeartbeatLoop tests the heartbeat loop behavior
 func TestHeartbeatLoop(t *testing.T) {
 	t.Skip("Skipping flaky timing test - heartbeat functionality tested in integration")
