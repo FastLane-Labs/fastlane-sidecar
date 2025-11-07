@@ -10,7 +10,6 @@ import (
 
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/auth"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/config"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/gorilla/websocket"
 )
 
@@ -23,31 +22,12 @@ func (m *mockMetricsProvider) GetSnapshot() interface{} {
 	}
 }
 
-// TestNewMonadGatewayClient_BothDisabled tests that constructor returns nil when both ingress and egress are disabled
-func TestNewMonadGatewayClient_BothDisabled(t *testing.T) {
-	cfg := &config.Config{
-		DisableGatewayIngress: true,
-		DisableGatewayEgress:  true,
-	}
-
-	client, err := NewMonadGatewayClient(cfg, &mockMetricsProvider{})
-	if err != nil {
-		t.Fatalf("Expected no error when both disabled, got: %v", err)
-	}
-
-	if client != nil {
-		t.Error("Expected nil client when both ingress and egress are disabled")
-	}
-}
-
 // TestNewMonadGatewayClient_NoCredentials tests that constructor returns nil when no credentials are provided
 func TestNewMonadGatewayClient_NoCredentials(t *testing.T) {
 	cfg := &config.Config{
-		DisableGatewayIngress: false,
-		DisableGatewayEgress:  false,
-		GatewayURL:            "http://localhost",
-		DelegationPath:        "", // No credentials
-		KeystorePath:          "",
+		GatewayURL:     "http://localhost",
+		DelegationPath: "", // No credentials
+		KeystorePath:   "",
 	}
 
 	client, err := NewMonadGatewayClient(cfg, &mockMetricsProvider{})
@@ -63,72 +43,6 @@ func TestNewMonadGatewayClient_NoCredentials(t *testing.T) {
 // TestNewMonadGatewayClient_RegistrationSuccess tests successful registration
 func TestNewMonadGatewayClient_RegistrationSuccess(t *testing.T) {
 	t.Skip("Skipping test that requires HTTP registration - needs mock server setup")
-}
-
-// TestClient_SendToGateway_EgressDisabled tests that SendToGateway is a no-op when egress is disabled
-func TestClient_SendToGateway_EgressDisabled(t *testing.T) {
-	client := &Client{
-		config: &config.Config{
-			DisableGatewayEgress: true,
-		},
-	}
-
-	err := client.SendToGateway([]byte("test"))
-	if err != nil {
-		t.Errorf("Expected no error when egress is disabled, got: %v", err)
-	}
-}
-
-// TestClient_SendToGateway_NotAuthenticated tests that SendToGateway fails when not authenticated
-func TestClient_SendToGateway_NotAuthenticated(t *testing.T) {
-	client := &Client{
-		config: &config.Config{
-			DisableGatewayEgress: false,
-		},
-	}
-	client.authenticated.Store(false)
-
-	err := client.SendToGateway([]byte("test"))
-	if err == nil {
-		t.Fatal("Expected error when not authenticated")
-	}
-
-	if !strings.Contains(err.Error(), "not authenticated") {
-		t.Errorf("Expected error about not authenticated, got: %v", err)
-	}
-}
-
-// TestClient_NotifyTransactionDropped_EgressDisabled tests that NotifyTransactionDropped is a no-op when egress is disabled
-func TestClient_NotifyTransactionDropped_EgressDisabled(t *testing.T) {
-	client := &Client{
-		config: &config.Config{
-			DisableGatewayEgress: true,
-		},
-	}
-
-	err := client.NotifyTransactionDropped(common.HexToHash("0x123"))
-	if err != nil {
-		t.Errorf("Expected no error when egress is disabled, got: %v", err)
-	}
-}
-
-// TestClient_NotifyTransactionDropped_NotAuthenticated tests that NotifyTransactionDropped fails when not authenticated
-func TestClient_NotifyTransactionDropped_NotAuthenticated(t *testing.T) {
-	client := &Client{
-		config: &config.Config{
-			DisableGatewayEgress: false,
-		},
-	}
-	client.authenticated.Store(false)
-
-	err := client.NotifyTransactionDropped(common.HexToHash("0x123"))
-	if err == nil {
-		t.Fatal("Expected error when not authenticated")
-	}
-
-	if !strings.Contains(err.Error(), "not authenticated") {
-		t.Errorf("Expected error about not authenticated, got: %v", err)
-	}
 }
 
 // TestClient_Health tests the Health method returns correct stats
@@ -166,31 +80,6 @@ func TestClient_Health(t *testing.T) {
 	}
 	if !strings.Contains(health.LastError, "context deadline exceeded") {
 		t.Errorf("Expected error about deadline, got: %s", health.LastError)
-	}
-}
-
-// TestClient_GetTransactionChannel tests the transaction channel access
-func TestClient_GetTransactionChannel(t *testing.T) {
-	client := &Client{
-		txChan: make(chan []byte, 10),
-	}
-
-	txChan := client.GetTransactionChannel()
-	if txChan == nil {
-		t.Fatal("Expected non-nil transaction channel")
-	}
-
-	// Test sending and receiving
-	testTx := []byte("test-tx")
-	client.txChan <- testTx
-
-	select {
-	case received := <-txChan:
-		if string(received) != string(testTx) {
-			t.Errorf("Expected to receive %s, got %s", testTx, received)
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Timeout waiting for transaction")
 	}
 }
 

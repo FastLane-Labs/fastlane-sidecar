@@ -100,9 +100,6 @@ func (c *Client) handleNotification(notif jsonRPCNotification) error {
 	log.Debug("Received notification", "method", notif.Method)
 
 	switch notif.Method {
-	case "validator_bundle_notification":
-		return c.handleBundleNotification(notif.Params)
-
 	case "validator_auth_expiring":
 		return c.handleAuthExpiring(notif.Params)
 
@@ -114,74 +111,6 @@ func (c *Client) handleNotification(notif jsonRPCNotification) error {
 
 	default:
 		log.Debug("Unknown notification method", "method", notif.Method)
-	}
-
-	return nil
-}
-
-// handleBundleNotification processes bundle notifications and sends txs to channel
-func (c *Client) handleBundleNotification(params json.RawMessage) error {
-	if c.config.DisableGatewayIngress {
-		return nil // Ingress disabled, ignore
-	}
-
-	var paramsMap map[string]interface{}
-	if err := json.Unmarshal(params, &paramsMap); err != nil {
-		return fmt.Errorf("invalid bundle notification params: %w", err)
-	}
-
-	// Extract bundles array
-	bundlesInterface, ok := paramsMap["bundles"].([]interface{})
-	if !ok {
-		return fmt.Errorf("bundle notification missing bundles field")
-	}
-
-	// Process each bundle
-	for _, bundleInterface := range bundlesInterface {
-		bundle, ok := bundleInterface.(map[string]interface{})
-		if !ok {
-			log.Warn("Invalid bundle format")
-			continue
-		}
-
-		bundleID, _ := bundle["bundle_id"].(string)
-
-		// Extract transactions from bundle
-		txsInterface, ok := bundle["txs"].([]interface{})
-		if !ok {
-			log.Warn("Bundle missing txs field", "bundle_id", bundleID)
-			continue
-		}
-
-		// Process each transaction
-		for _, txInterface := range txsInterface {
-			txMap, ok := txInterface.(map[string]interface{})
-			if !ok {
-				log.Warn("Invalid transaction format in bundle", "bundle_id", bundleID)
-				continue
-			}
-
-			txHex, ok := txMap["raw_tx_hex"].(string)
-			if !ok {
-				log.Warn("Transaction missing raw_tx_hex", "bundle_id", bundleID)
-				continue
-			}
-
-			// Decode hex transaction
-			txBytes, err := decodeHex(txHex)
-			if err != nil {
-				log.Warn("Failed to decode transaction hex", "bundle_id", bundleID, "error", err)
-				continue
-			}
-
-			// Send to channel (non-blocking)
-			select {
-			case c.txChan <- txBytes:
-				log.Debug("Sent transaction to channel", "bundle_id", bundleID, "bytes", len(txBytes))
-			default:
-				log.Warn("Transaction channel full, dropping transaction", "bundle_id", bundleID)
-			}
-		}
 	}
 
 	return nil

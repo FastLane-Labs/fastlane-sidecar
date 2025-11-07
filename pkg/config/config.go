@@ -48,10 +48,6 @@ type Config struct {
 	// Network configuration
 	Network string // Network name (e.g., "testnet", "testnet-2", "mainnet")
 
-	// Gateway control
-	DisableGatewayIngress bool // Disable receiving transactions from gateway
-	DisableGatewayEgress  bool // Disable sending transactions to gateway
-
 	// Monitoring configuration
 	MonitoringPort int // HTTP port for monitoring endpoints (/health and /metrics)
 }
@@ -104,8 +100,6 @@ func NewConfig() *Config {
 		fmt.Fprintf(os.Stderr, "  %s -network=testnet-2 -home=/var/lib/fastlane/\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Run with info logging and password file\n")
 		fmt.Fprintf(os.Stderr, "  %s -log-level=info -password-file=/etc/fastlane/password.txt\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # Run with gateway disabled (local testing)\n")
-		fmt.Fprintf(os.Stderr, "  %s -disable-gateway-ingress -disable-gateway-egress\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "For more information, visit: https://github.com/FastLane-Labs/fastlane-sidecar\n")
 	}
 
@@ -120,8 +114,6 @@ func NewConfig() *Config {
 	fs.StringVar(&conf.PasswordFilePath, "password-file", "", "Path to file containing keystore password")
 	fs.StringVar(&conf.Network, "network", "testnet", "Network name (testnet, testnet-2, mainnet)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional, uses network default if not set)")
-	fs.BoolVar(&conf.DisableGatewayIngress, "disable-gateway-ingress", false, "Disable receiving transactions from gateway")
-	fs.BoolVar(&conf.DisableGatewayEgress, "disable-gateway-egress", false, "Disable sending transactions to gateway")
 	fs.IntVar(&conf.MonitoringPort, "monitoring-port", 8765, "HTTP port for monitoring endpoints (/health and /metrics)")
 
 	fs.Parse(os.Args[1:])

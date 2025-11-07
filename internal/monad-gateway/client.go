@@ -13,7 +13,6 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/auth"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/config"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/gorilla/websocket"
 )
 
@@ -41,9 +40,6 @@ type Client struct {
 	conn    *websocket.Conn
 	connMu  sync.RWMutex
 	writeMu sync.Mutex
-
-	// Channels
-	txChan chan []byte // Transactions from gateway
 
 	// State
 	authenticated atomic.Bool
@@ -94,15 +90,8 @@ type jsonRPCNotification struct {
 // NewMonadGatewayClient creates a new gateway client
 // Loads credentials from disk but does NOT perform HTTP registration or WebSocket connection
 // Call Start() to register and connect
-// Returns nil if gateway is disabled (both ingress and egress disabled)
 // Returns nil if credentials are not provided (no delegation or keystore paths)
 func NewMonadGatewayClient(cfg *config.Config, metricsProvider MetricsProvider) (*Client, error) {
-	// Check if gateway is disabled
-	if cfg.DisableGatewayIngress && cfg.DisableGatewayEgress {
-		log.Info("Gateway connection disabled (ingress and egress both disabled)")
-		return nil, nil
-	}
-
 	// Check if credentials are provided
 	if cfg.DelegationPath == "" || cfg.KeystorePath == "" {
 		log.Warn("Gateway enabled but no credentials provided - gateway will not be used")
@@ -140,12 +129,11 @@ func NewMonadGatewayClient(cfg *config.Config, metricsProvider MetricsProvider) 
 	// Create registration client (will be used in Start())
 	regClient := auth.NewRegistrationClient(cfg.GatewayURL)
 
-	// Create client with default buffer size (will be updated after registration)
+	// Create client
 	client := &Client{
 		config:          cfg,
 		creds:           creds,
 		regClient:       regClient,
-		txChan:          make(chan []byte, 100), // Default buffer, updated after registration
 		metricsProvider: metricsProvider,
 	}
 
@@ -184,50 +172,6 @@ func (c *Client) Stop() error {
 	}
 
 	return nil
-}
-
-// GetTransactionChannel returns the channel for receiving transactions from gateway
-func (c *Client) GetTransactionChannel() <-chan []byte {
-	return c.txChan
-}
-
-// SendToGateway sends a transaction to the gateway
-func (c *Client) SendToGateway(txBytes []byte) error {
-	if c.config.DisableGatewayEgress {
-		return nil // Egress disabled, silently ignore
-	}
-
-	if !c.authenticated.Load() {
-		return fmt.Errorf("not authenticated with gateway")
-	}
-
-	// Encode transaction as hex
-	txHex := "0x" + fmt.Sprintf("%x", txBytes)
-
-	params := map[string]interface{}{
-		"txs": []string{txHex},
-	}
-
-	_, err := c.sendRequest("validator_publish_mempool", params)
-	return err
-}
-
-// NotifyTransactionDropped notifies the gateway that a transaction was dropped
-func (c *Client) NotifyTransactionDropped(txHash common.Hash) error {
-	if c.config.DisableGatewayEgress {
-		return nil // Egress disabled, silently ignore
-	}
-
-	if !c.authenticated.Load() {
-		return fmt.Errorf("not authenticated with gateway")
-	}
-
-	params := map[string]interface{}{
-		"tx_hash": txHash.Hex(),
-	}
-
-	_, err := c.sendRequest("validator_tx_dropped", params)
-	return err
 }
 
 // Health returns current health statistics

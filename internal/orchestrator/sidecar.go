@@ -132,7 +132,6 @@ func (s *Sidecar) Start() error {
 
 	// Start processing goroutines
 	go s.processNodeTransactions()
-	go s.processGatewayTransactions()
 	go s.cleanupOldTransactions()
 
 	return nil
@@ -198,11 +197,7 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 		stats.GatewayAuthenticated = false
 		s.metrics.GatewayConnected.Store(0)
 		s.metrics.GatewayAuthenticated.Store(0)
-		if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
-			stats.GatewayError = "gateway disabled (ingress and egress both disabled)"
-		} else {
-			stats.GatewayError = "gateway not initialized"
-		}
+		stats.GatewayError = "gateway not initialized"
 	}
 
 	return stats
@@ -221,32 +216,6 @@ func (s *Sidecar) processNodeTransactions() {
 			return
 		case msgBytes := <-txChan:
 			s.handleIncomingMessage(msgBytes, "node")
-		}
-	}
-}
-
-// processGatewayTransactions handles transactions from the gateway
-func (s *Sidecar) processGatewayTransactions() {
-	if s.gatewayClient == nil {
-		log.Info("Gateway client not initialized, not processing gateway transactions")
-		return
-	}
-
-	if s.config.DisableGatewayIngress {
-		log.Info("Gateway ingress disabled, not processing gateway transactions")
-		return
-	}
-
-	gatewayTxChan := s.gatewayClient.GetTransactionChannel()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Info("Gateway transaction processing stopped")
-			return
-		case txBytes := <-gatewayTxChan:
-			// Gateway sends raw RLP transaction bytes, not FastlaneMessage enums
-			s.handleIncomingTransaction(txBytes, "gateway")
 		}
 	}
 }
@@ -369,10 +338,7 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 		s.handleBackrunBid(txBytes, hash, bidData)
 	case types.NormalTransaction:
 		s.metrics.NormalTxsProcessed.Add(1)
-		// Normal transaction - just keep in pool and forward to gateway if from node
-		if source == "node" {
-			s.forwardToGateway(txBytes)
-		}
+		// Normal transaction - just keep in pool
 	}
 
 	// Track processing latency
@@ -393,13 +359,6 @@ func (s *Sidecar) handleTransactionDropped(txHashBytes []byte) {
 	removedTx := s.txPool.RemoveTransaction(txHash)
 	if removedTx != nil {
 		log.Info("Transaction dropped by node and removed from pool", "hash", txHash.Hex(), "source", removedTx.Source)
-
-		// Notify gateway about the dropped transaction if it didn't come from gateway
-		if s.gatewayClient != nil && removedTx.Source != "gateway" {
-			if err := s.gatewayClient.NotifyTransactionDropped(txHash); err != nil {
-				log.Debug("Failed to notify gateway of dropped transaction", "error", err, "hash", txHash.Hex())
-			}
-		}
 	} else {
 		log.Info("Transaction dropped by node but not found in pool", "hash", txHash.Hex())
 	}
@@ -474,19 +433,6 @@ func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
 	}
 	s.txStreamed.Add(1)
 	s.metrics.TxSentToNode.Add(1)
-}
-
-// forwardToGateway sends transaction to gateway (if it didn't come from there)
-func (s *Sidecar) forwardToGateway(txBytes []byte) {
-	if s.gatewayClient == nil {
-		return // Gateway client not initialized
-	}
-	if err := s.gatewayClient.SendToGateway(txBytes); err != nil {
-		log.Debug("Failed to send transaction to gateway", "error", err)
-		s.metrics.GatewayErrors.Add(1)
-		return
-	}
-	s.metrics.TxSentToGateway.Add(1)
 }
 
 // cleanupOldTransactions periodically removes old transactions
