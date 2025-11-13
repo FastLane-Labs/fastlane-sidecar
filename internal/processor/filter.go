@@ -137,28 +137,28 @@ func (f *Filter) classifyFlashExecutionBid(data []byte) (types.TransactionType, 
 		return types.NormalTransaction, nil
 	}
 
-	// Classify based on txHashes length
-	switch len(txHashes) {
-	case 0:
-		// TOB bid (no target transactions)
-		return types.TOBBid, &types.BidData{
-			BidAmount: bidAmount,
-		}
-
-	case 1:
-		// Backrun bid (single target transaction)
-		targetHash := common.BytesToHash(txHashes[0][:])
-		return types.BackrunBid, &types.BidData{
-			BidAmount:    bidAmount,
-			TargetTxHash: &targetHash,
-		}
-
-	default:
-		// Multiple targets not supported yet
-		log.Warn("flashExecutionBid with multiple targets not supported yet",
+	// Classify based on txHashes length and content
+	if len(txHashes) != 1 {
+		// Only single-element arrays are valid bids
+		log.Warn("flashExecutionBid with invalid txHashes length",
 			"target_count", len(txHashes),
 			"bid_amount", bidAmount.String())
 		return types.NormalTransaction, nil
+	}
+
+	// Check if the hash is zero (TOB) or non-zero (Backrun)
+	targetHash := common.BytesToHash(txHashes[0][:])
+	if targetHash == (common.Hash{}) {
+		// TOB bid (zero hash indicates top-of-block bid)
+		return types.TOBBid, &types.BidData{
+			BidAmount: bidAmount,
+		}
+	}
+
+	// Backrun bid (non-zero hash indicates target transaction)
+	return types.BackrunBid, &types.BidData{
+		BidAmount:    bidAmount,
+		TargetTxHash: &targetHash,
 	}
 }
 

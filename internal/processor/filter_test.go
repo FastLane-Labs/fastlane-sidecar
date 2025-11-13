@@ -18,17 +18,18 @@ func TestClassifyTOBBid(t *testing.T) {
 		t.Fatalf("Failed to create filter: %v", err)
 	}
 
-	// Create flashExecutionBid calldata for TOB (empty txHashes array)
+	// Create flashExecutionBid calldata for TOB (single zero hash)
 	bidAmount := big.NewInt(1000)
+	zeroHash := [32]byte{} // Zero hash indicates TOB bid
 
 	// Encode using the ABI
 	method := filter.flashBidABI.Methods["flashExecutionBid"]
 	calldata, err := method.Inputs.Pack(
-		bidAmount,       // bidAmount
-		[][32]byte{},    // txHashes (empty = TOB)
-		big.NewInt(100), // targetBlockNumber
-		false,           // executeOnLoss
-		false,           // payBidOnFail
+		bidAmount,          // bidAmount
+		[][32]byte{zeroHash}, // txHashes (zero hash = TOB)
+		big.NewInt(100),    // targetBlockNumber
+		false,              // executeOnLoss
+		false,              // payBidOnFail
 		common.HexToAddress("0x1234567890123456789012345678901234567890"), // searcherToAddress
 		[]byte{}, // searcherCallData
 	)
@@ -182,6 +183,56 @@ func TestClassifyMultipleTargets(t *testing.T) {
 
 	if bidData != nil {
 		t.Error("Expected nil bid data for unsupported multiple targets")
+	}
+}
+
+func TestClassifyEmptyTxHashes(t *testing.T) {
+	filter, err := NewFilter(testContractAddr)
+	if err != nil {
+		t.Fatalf("Failed to create filter: %v", err)
+	}
+
+	// Create flashExecutionBid calldata with empty txHashes array (should be normal tx)
+	bidAmount := big.NewInt(3000)
+
+	// Encode using the ABI
+	method := filter.flashBidABI.Methods["flashExecutionBid"]
+	calldata, err := method.Inputs.Pack(
+		bidAmount,       // bidAmount
+		[][32]byte{},    // txHashes (empty = invalid, treated as normal)
+		big.NewInt(100), // targetBlockNumber
+		false,           // executeOnLoss
+		false,           // payBidOnFail
+		common.HexToAddress("0x1234567890123456789012345678901234567890"), // searcherToAddress
+		[]byte{}, // searcherCallData
+	)
+	if err != nil {
+		t.Fatalf("Failed to pack calldata: %v", err)
+	}
+
+	// Prepend method signature
+	fullCalldata := append(filter.flashBidMethodSig[:], calldata...)
+
+	// Create transaction
+	tx := ethTypes.NewTransaction(
+		0,
+		filter.fastlaneContract,
+		big.NewInt(0),
+		100000,
+		big.NewInt(1000000000),
+		fullCalldata,
+	)
+
+	// Classify
+	txType, bidData := filter.ClassifyTransaction(tx)
+
+	// Verify - should be classified as normal (invalid length)
+	if txType != types.NormalTransaction {
+		t.Errorf("Expected NormalTransaction for empty txHashes, got %v", txType)
+	}
+
+	if bidData != nil {
+		t.Error("Expected nil bid data for invalid txHashes length")
 	}
 }
 
