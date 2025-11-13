@@ -25,11 +25,11 @@ func TestClassifyTOBBid(t *testing.T) {
 	// Encode using the ABI
 	method := filter.flashBidABI.Methods["flashExecutionBid"]
 	calldata, err := method.Inputs.Pack(
-		bidAmount,          // bidAmount
+		bidAmount,            // bidAmount
 		[][32]byte{zeroHash}, // txHashes (zero hash = TOB)
-		big.NewInt(100),    // targetBlockNumber
-		false,              // executeOnLoss
-		false,              // payBidOnFail
+		big.NewInt(100),      // targetBlockNumber
+		false,                // executeOnLoss
+		false,                // payBidOnFail
 		common.HexToAddress("0x1234567890123456789012345678901234567890"), // searcherToAddress
 		[]byte{}, // searcherCallData
 	)
