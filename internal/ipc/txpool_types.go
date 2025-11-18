@@ -214,13 +214,20 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 	switch EthTxPoolEventType(variantIndex) {
 	case EventInsert:
 		// Insert { address: Address, owned: bool, tx: TxEnvelope }
-		// address: [20 bytes]
+		// address: [length:8 bytes LE][20 bytes]
 		// owned: [1 byte] (bool as u8)
 		// tx: Vec<u8> [length:8 bytes][tx_bytes] (RLP-encoded transaction)
 
-		if len(data[offset:]) < 20+1+8 {
+		if len(data[offset:]) < 8+20+1+8 {
 			return nil, 0, fmt.Errorf("data too short for Insert action")
 		}
+
+		// Read Address length prefix (should be 20)
+		addressLen := binary.LittleEndian.Uint64(data[offset : offset+8])
+		if addressLen != 20 {
+			return nil, 0, fmt.Errorf("unexpected address length: %d (expected 20)", addressLen)
+		}
+		offset += 8
 
 		var address common.Address
 		copy(address[:], data[offset:offset+20])
