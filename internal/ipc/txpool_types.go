@@ -131,17 +131,31 @@ func DecodeEthTxPoolEvents(data []byte) ([]EthTxPoolEvent, error) {
 	vecLen := binary.LittleEndian.Uint64(data[:8])
 	offset := 8
 
+	fmt.Printf("DEBUG: DecodeEthTxPoolEvents: vecLen=%d, total_data_len=%d, first_16_bytes=%x\n",
+		vecLen, len(data), data[:min(16, len(data))])
+
 	events := make([]EthTxPoolEvent, 0, vecLen)
 	for i := uint64(0); i < vecLen; i++ {
+		fmt.Printf("DEBUG: Decoding event %d at offset %d, remaining_bytes=%d, next_36_bytes=%x\n",
+			i, offset, len(data[offset:]), data[offset:min(offset+36, len(data))])
 		event, bytesRead, err := decodeEthTxPoolEvent(data[offset:])
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode event %d: %w", i, err)
 		}
+		fmt.Printf("DEBUG: Event %d decoded successfully, consumed %d bytes, tx_hash=%x\n",
+			i, bytesRead, event.TxHash)
 		events = append(events, event)
 		offset += bytesRead
 	}
 
 	return events, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // decodeEthTxPoolEvent decodes a single EthTxPoolEvent from bincode format
@@ -182,6 +196,9 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 
 	variantIndex := binary.LittleEndian.Uint32(data[:4])
 	offset := 4
+
+	fmt.Printf("DEBUG: decodeEventAction: variantIndex=%d, first_8_bytes=%x\n",
+		variantIndex, data[:min(8, len(data))])
 
 	switch EthTxPoolEventType(variantIndex) {
 	case EventInsert:
