@@ -162,16 +162,27 @@ func min(a, b int) int {
 // Returns the event and number of bytes consumed
 func decodeEthTxPoolEvent(data []byte) (EthTxPoolEvent, int, error) {
 	// EthTxPoolEvent structure:
-	// - tx_hash: [32 bytes]
+	// - tx_hash: TxHash (bincode serializes as [length:8 bytes LE][32 bytes])
 	// - action: EthTxPoolEventType (enum)
 
-	if len(data) < 32 {
-		return EthTxPoolEvent{}, 0, fmt.Errorf("data too short for tx_hash: %d bytes", len(data))
+	if len(data) < 8 {
+		return EthTxPoolEvent{}, 0, fmt.Errorf("data too short for tx_hash length: %d bytes", len(data))
+	}
+
+	// Read TxHash length prefix (should be 32)
+	txHashLen := binary.LittleEndian.Uint64(data[:8])
+	if txHashLen != 32 {
+		return EthTxPoolEvent{}, 0, fmt.Errorf("unexpected tx_hash length: %d (expected 32)", txHashLen)
+	}
+	offset := 8
+
+	if len(data[offset:]) < 32 {
+		return EthTxPoolEvent{}, 0, fmt.Errorf("data too short for tx_hash data: %d bytes", len(data[offset:]))
 	}
 
 	var txHash common.Hash
-	copy(txHash[:], data[:32])
-	offset := 32
+	copy(txHash[:], data[offset:offset+32])
+	offset += 32
 
 	// Decode action enum (starts with u32 variant index)
 	action, bytesRead, err := decodeEventAction(data[offset:])
