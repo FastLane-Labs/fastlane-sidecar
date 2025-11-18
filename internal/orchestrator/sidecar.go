@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -33,8 +34,7 @@ type Sidecar struct {
 	poolSize      atomic.Uint64 // Current transaction pool size
 
 	// Components
-	nodeListener     *ipc.NodeListener
-	nodeSender       *ipc.NodeSender
+	txpoolClient     *ipc.TxPoolIPCClient
 	txPool           *pool.TransactionPool
 	filter           *processor.Filter
 	monitoringServer *health.Server
@@ -60,8 +60,7 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 	s := &Sidecar{
 		config:       config,
 		shutdownChan: shutdownChan,
-		nodeListener: ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
-		nodeSender:   ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
+		txpoolClient: ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath),
 		txPool:       pool.NewTransactionPool(config.PoolMaxDuration),
 		filter:       filter,
 		metrics:      m,
@@ -96,21 +95,17 @@ func (s *Sidecar) Start() error {
 		}
 	}()
 
-	// Start node listener
-	if err := s.nodeListener.Start(); err != nil {
-		return err
-	}
+	// TxPool IPC client connects automatically in background
+	// Just wait a moment to allow initial connection
+	time.Sleep(100 * time.Millisecond)
 
-	// Connect to node sender
-	if err := s.nodeSender.Connect(); err != nil {
-		return err
+	// Set node connected metric (will be updated by connection status)
+	if s.txpoolClient.IsConnected() {
+		s.metrics.NodeConnected.Store(1)
 	}
-
-	// Set node connected metric
-	s.metrics.NodeConnected.Store(1)
 
 	// Start processing goroutines
-	go s.processNodeTransactions()
+	go s.processTxPoolEvents()
 	go s.cleanupOldTransactions()
 
 	return nil
@@ -118,11 +113,8 @@ func (s *Sidecar) Start() error {
 
 func (s *Sidecar) Stop() {
 	s.cancel()
-	if s.nodeListener != nil {
-		s.nodeListener.Stop()
-	}
-	if s.nodeSender != nil {
-		s.nodeSender.Close()
+	if s.txpoolClient != nil {
+		s.txpoolClient.Close()
 	}
 	if s.metrics != nil {
 		s.metrics.StopSystemMetricsCollection()
@@ -149,95 +141,83 @@ func (s *Sidecar) GetHealthStatsForServer() health.Stats {
 	}
 }
 
-// processNodeTransactions handles transactions from the node
-func (s *Sidecar) processNodeTransactions() {
+// processTxPoolEvents handles events from the txpool IPC
+func (s *Sidecar) processTxPoolEvents() {
 	defer close(s.shutdownChan)
 
-	txChan := s.nodeListener.GetTransactionChannel()
+	eventChan := s.txpoolClient.GetEventChannel()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			log.Info("Node transaction processing stopped")
+			log.Info("TxPool event processing stopped")
 			return
-		case msgBytes := <-txChan:
-			s.handleIncomingMessage(msgBytes, "node")
+		case event := <-eventChan:
+			s.handleTxPoolEvent(event)
 		}
 	}
 }
 
-// handleIncomingMessage handles FastlaneMessage from node
-func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
-	// Parse the FastlaneMessage enum
-	msgType, data := types.ParseFastlaneMessage(msgBytes)
-
-	switch msgType {
-	case "TxAdded":
-		txAdded, ok := data.(types.TxAdded)
-		if !ok {
-			log.Error("Invalid TxAdded data", "source", source)
-			s.metrics.DecodeErrors.Add(1)
-			return
-		}
-
-		// Calculate latency if timestamp is provided
-		var latencyMs int64
-		if txAdded.TimestampMs > 0 {
-			nowMs := uint64(time.Now().UnixMilli())
-			latencyMs = int64(nowMs - txAdded.TimestampMs)
-			// Track node message latency
-			s.metrics.RecordNodeMessageLatency(float64(latencyMs) / 1000.0)
-		}
-
-		log.Info("Received TxAdded message", "bytes", len(txAdded.TxBytes), "source", source, "latency_ms", latencyMs)
-		s.txReceived.Add(1) // Only count actual transactions, not heartbeats
-		s.metrics.TxReceivedFromNode.Add(1)
-
-		s.handleIncomingTransaction(txAdded.TxBytes, source)
-
-	case "TxDropped":
-		txDropped, ok := data.(types.TxDropped)
-		if !ok {
-			log.Error("Invalid TxDropped data", "source", source)
-			s.metrics.DecodeErrors.Add(1)
-			return
-		}
-		log.Info("Received TxDropped message", "hash", common.BytesToHash(txDropped.TxHash[:]).Hex(), "source", source)
-		s.metrics.TxDropped.Add(1)
-		s.handleTransactionDropped(txDropped.TxHash[:])
-
-	case "Heartbeat":
-		log.Debug("Received Heartbeat message", "source", source)
-		now := time.Now()
-		s.lastHeartbeat.Store(now.UnixNano())
-		s.metrics.LastHeartbeatTimestamp.Store(now.Unix())
-
-	default:
-		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
-		// Fallback to old behavior for compatibility
-		s.txReceived.Add(1)
-		s.metrics.TxReceivedFromNode.Add(1)
-		s.handleIncomingTransaction(msgBytes, source)
-	}
-}
-
-// handleIncomingTransaction implements the new transaction lifecycle
-func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
+// handleTxPoolEvent handles events from the txpool
+func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 	startTime := time.Now()
 
-	// The txBytes are raw transaction bytes from TxAdded message
+	switch action := event.Action.(type) {
+	case ipc.InsertAction:
+		// New transaction inserted into txpool
+		log.Info("Received Insert event", "tx_hash", event.TxHash.Hex(), "address", action.Address.Hex(), "owned", action.Owned)
+		s.txReceived.Add(1)
+		s.metrics.TxReceivedFromNode.Add(1)
 
-	// Decode transaction using UnmarshalBinary which handles both:
-	// - Legacy RLP transactions
-	// - EIP-2718 typed transactions (envelope format)
-	var tx ethTypes.Transaction
-	if err := tx.UnmarshalBinary(txBytes); err != nil {
-		log.Error("Failed to decode transaction", "error", err, "source", source)
+		// Track message latency (from insertion to sidecar receipt)
+		s.metrics.RecordNodeMessageLatency(time.Since(startTime).Seconds())
+
+		// Process the transaction
+		s.handleIncomingTransactionFromEvent(action.Tx)
+
+	case ipc.CommitAction:
+		// Transaction committed to blockchain - remove from pool if exists
+		log.Debug("Received Commit event", "tx_hash", event.TxHash.Hex())
+		removedTx := s.txPool.RemoveTransaction(event.TxHash)
+		if removedTx != nil {
+			log.Info("Transaction committed and removed from pool", "hash", event.TxHash.Hex())
+		}
+
+	case ipc.DropAction:
+		// Transaction dropped from txpool
+		log.Info("Received Drop event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
+		s.metrics.TxDropped.Add(1)
+		removedTx := s.txPool.RemoveTransaction(event.TxHash)
+		if removedTx != nil {
+			log.Info("Transaction dropped and removed from pool", "hash", event.TxHash.Hex(), "source", removedTx.Source)
+		}
+
+	case ipc.EvictAction:
+		// Transaction evicted from txpool
+		log.Info("Received Evict event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
+		removedTx := s.txPool.RemoveTransaction(event.TxHash)
+		if removedTx != nil {
+			log.Info("Transaction evicted and removed from pool", "hash", event.TxHash.Hex())
+		}
+
+	default:
+		log.Error("Unknown event action type", "tx_hash", event.TxHash.Hex())
+	}
+}
+
+// handleIncomingTransactionFromEvent processes a transaction from txpool event
+func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction) {
+	startTime := time.Now()
+
+	hash := tx.Hash()
+
+	// Get transaction bytes for storage
+	txBytes, err := tx.MarshalBinary()
+	if err != nil {
+		log.Error("Failed to marshal transaction", "error", err, "hash", hash.Hex())
 		s.metrics.DecodeErrors.Add(1)
 		return
 	}
-
-	hash := tx.Hash()
 
 	// Check if transaction already exists in pool
 	if s.txPool.Exists(hash) {
@@ -246,10 +226,10 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	}
 
 	// Check if this is a fastlane bid
-	txType, bidData := s.filter.ClassifyTransaction(&tx)
+	txType, bidData := s.filter.ClassifyTransaction(tx)
 
 	// Add to transaction pool with decoded tx
-	if err := s.txPool.AddTransaction(&tx, txBytes, source); err != nil {
+	if err := s.txPool.AddTransaction(tx, txBytes, "txpool"); err != nil {
 		log.Error("Failed to add transaction to pool", "error", err)
 		return
 	}
@@ -268,10 +248,10 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	switch txType {
 	case types.TOBBid:
 		s.metrics.TOBBidsProcessed.Add(1)
-		s.handleTOBBid(txBytes, bidData)
+		s.handleTOBBid(tx, bidData)
 	case types.BackrunBid:
 		s.metrics.BackrunBidsProcessed.Add(1)
-		s.handleBackrunBid(txBytes, hash, bidData)
+		s.handleBackrunBid(tx, hash, bidData)
 	case types.NormalTransaction:
 		s.metrics.NormalTxsProcessed.Add(1)
 		// Normal transaction - just keep in pool
@@ -282,26 +262,9 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	s.metrics.RecordTxProcessingLatency(processingTime)
 }
 
-// handleTransactionDropped handles TxDropped messages
-func (s *Sidecar) handleTransactionDropped(txHashBytes []byte) {
-	if len(txHashBytes) < 32 {
-		log.Error("Invalid transaction hash in TxDropped message")
-		return
-	}
-
-	txHash := common.BytesToHash(txHashBytes[:32])
-
-	// Remove from pool if it exists
-	removedTx := s.txPool.RemoveTransaction(txHash)
-	if removedTx != nil {
-		log.Info("Transaction dropped by node and removed from pool", "hash", txHash.Hex(), "source", removedTx.Source)
-	} else {
-		log.Info("Transaction dropped by node but not found in pool", "hash", txHash.Hex())
-	}
-}
 
 // handleTOBBid processes TOB bid - compute priority and stream immediately
-func (s *Sidecar) handleTOBBid(txBytes []byte, bidData *types.BidData) {
+func (s *Sidecar) handleTOBBid(tx *ethTypes.Transaction, bidData *types.BidData) {
 	if bidData == nil || bidData.BidAmount == nil {
 		log.Error("TOB bid missing bid data")
 		return
@@ -310,18 +273,14 @@ func (s *Sidecar) handleTOBBid(txBytes []byte, bidData *types.BidData) {
 	// Compute priority
 	priority := priorities.CalculateTOBPriority(bidData.BidAmount)
 
-	// Stream immediately to node
-	txWithPriority := types.TxWithPriority{
-		TxBytes:  txBytes,
-		Priority: priority,
-	}
-	s.streamTransaction(txWithPriority)
+	// Stream immediately to txpool
+	s.streamTransaction(tx, priority)
 
 	log.Info("Processed TOB bid", "bid_amount", bidData.BidAmount.String(), "priority", priorities.FormatPriority(priority))
 }
 
 // handleBackrunBid processes backrun bid - look for opportunity and stream both if found
-func (s *Sidecar) handleBackrunBid(txBytes []byte, bidHash common.Hash, bidData *types.BidData) {
+func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash, bidData *types.BidData) {
 	if bidData == nil || bidData.BidAmount == nil || bidData.TargetTxHash == nil {
 		log.Error("Backrun bid missing bid data")
 		return
@@ -336,34 +295,26 @@ func (s *Sidecar) handleBackrunBid(txBytes []byte, bidHash common.Hash, bidData 
 	}
 
 	// Found target transaction - compute priorities and stream both
-	oppGasTip := targetTx.Tx.GasTipCap()
+	// Use target transaction hash as backrun_id for grouping
 
 	// Stream opportunity transaction first
-	oppPriority := priorities.CalculateOpportunityPriority(oppGasTip)
-	oppTxWithPriority := types.TxWithPriority{
-		TxBytes:  targetTx.TxBytes,
-		Priority: oppPriority,
-	}
-	s.streamTransaction(oppTxWithPriority)
+	oppPriority := priorities.CalculateOpportunityPriority(targetTxHash)
+	s.streamTransaction(targetTx.Tx, oppPriority)
 
 	// Stream backrun bid
-	backrunPriority := priorities.CalculateBackrunPriority(bidData.BidAmount, oppGasTip)
-	backrunTxWithPriority := types.TxWithPriority{
-		TxBytes:  txBytes,
-		Priority: backrunPriority,
-	}
-	s.streamTransaction(backrunTxWithPriority)
+	backrunPriority := priorities.CalculateBackrunPriority(bidData.BidAmount, targetTxHash)
+	s.streamTransaction(tx, backrunPriority)
 
 	// Track successful backrun pair match
 	s.metrics.BackrunPairsMatched.Add(1)
 
-	log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String(), "opp_gas_tip", oppGasTip.String())
+	log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String())
 }
 
-// streamTransaction sends a transaction with priority to the node
-func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
-	if err := s.nodeSender.SendTxWithPriority(txWithPriority); err != nil {
-		log.Error("Failed to send transaction to node", "error", err)
+// streamTransaction sends a transaction with priority to the txpool
+func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int) {
+	if err := s.txpoolClient.SendTxWithPriority(tx, priority, []byte{}); err != nil {
+		log.Error("Failed to send transaction to txpool", "error", err)
 		s.metrics.SendErrors.Add(1)
 		return
 	}

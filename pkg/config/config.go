@@ -9,8 +9,10 @@ import (
 )
 
 const (
+	// Legacy socket suffixes (kept for backward compatibility comments)
 	NodeToSidecarSuffix = "node_to_sidecar"
 	SidecarToNodeSuffix = "sidecar_to_node"
+	TxPoolSocketName    = "mempool.sock" // Txpool IPC socket name
 )
 
 // FastlaneContractAddresses maps network names to their FastLaneAuctionHandler contract addresses
@@ -20,11 +22,13 @@ var FastlaneContractAddresses = map[string]string{
 }
 
 type Config struct {
-	LogLevel                string
-	Network                 string
-	HomePath                string
-	NodeToSidecarSocketPath string // Derived from HomePath + ".node_to_sidecar"
-	SidecarToNodeSocketPath string // Derived from HomePath + ".sidecar_to_node"
+	LogLevel         string
+	Network          string
+	HomePath         string
+	TxPoolSocketPath string // Txpool IPC socket path (default: /home/monad/monad-bft/mempool.sock)
+	// Legacy fields (kept for backward compatibility but not used)
+	NodeToSidecarSocketPath string
+	SidecarToNodeSocketPath string
 	PoolMaxDuration         time.Duration
 	AuctionCycleTime        time.Duration
 	FastlaneContract        string // Hex address of the fastlane auction contract
@@ -38,6 +42,7 @@ func NewConfig() *Config {
 	var poolMaxDurationMs int
 	var auctionCycleMs int
 	var contractOverride string
+	var txpoolSocketPath string
 
 	fs := flag.NewFlagSet("UserConfig", flag.ExitOnError)
 
@@ -71,6 +76,7 @@ func NewConfig() *Config {
 	fs.StringVar(&conf.Network, "network", "testnet", "Network name: testnet, mainnet")
 	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level (debug, info, warn, error)")
 	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
+	fs.StringVar(&txpoolSocketPath, "txpool-socket", "/home/monad/monad-bft/mempool.sock", "Txpool IPC socket path")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 2500, "Maximum time to hold transactions in pool (ms)")
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional)")
@@ -87,7 +93,10 @@ func NewConfig() *Config {
 	conf.PoolMaxDuration = time.Duration(poolMaxDurationMs) * time.Millisecond
 	conf.AuctionCycleTime = time.Duration(auctionCycleMs) * time.Millisecond
 
-	// Derive socket paths from home directory
+	// Set txpool socket path
+	conf.TxPoolSocketPath = txpoolSocketPath
+
+	// Derive legacy socket paths from home directory (kept for backward compatibility)
 	conf.NodeToSidecarSocketPath = filepath.Join(conf.HomePath, NodeToSidecarSuffix)
 	conf.SidecarToNodeSocketPath = filepath.Join(conf.HomePath, SidecarToNodeSuffix)
 
