@@ -131,38 +131,17 @@ func DecodeEthTxPoolEvents(data []byte) ([]EthTxPoolEvent, error) {
 	vecLen := binary.LittleEndian.Uint64(data[:8])
 	offset := 8
 
-	fmt.Printf("DEBUG: DecodeEthTxPoolEvents: vecLen=%d, total_data_len=%d, first_16_bytes=%x\n",
-		vecLen, len(data), data[:min(16, len(data))])
-
 	events := make([]EthTxPoolEvent, 0, vecLen)
 	for i := uint64(0); i < vecLen; i++ {
-		fmt.Printf("DEBUG: Decoding event %d at offset %d, remaining_bytes=%d, next_36_bytes=%x\n",
-			i, offset, len(data[offset:]), data[offset:min(offset+36, len(data))])
 		event, bytesRead, err := decodeEthTxPoolEvent(data[offset:])
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode event %d: %w", i, err)
 		}
-		fmt.Printf("DEBUG: Event %d decoded successfully, consumed %d bytes, tx_hash=%x\n",
-			i, bytesRead, event.TxHash)
 		events = append(events, event)
 		offset += bytesRead
 	}
 
 	return events, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // decodeEthTxPoolEvent decodes a single EthTxPoolEvent from bincode format
@@ -215,9 +194,6 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 	variantIndex := binary.LittleEndian.Uint32(data[:4])
 	offset := 4
 
-	fmt.Printf("DEBUG: decodeEventAction: variantIndex=%d, first_8_bytes=%x\n",
-		variantIndex, data[:min(8, len(data))])
-
 	switch EthTxPoolEventType(variantIndex) {
 	case EventInsert:
 		// Insert { address: Address, owned: bool, tx: TxEnvelope }
@@ -247,9 +223,6 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 		txBytesLen := binary.LittleEndian.Uint64(data[offset : offset+8])
 		offset += 8
 
-		fmt.Printf("DEBUG: Insert action - address=%x, owned=%v, txBytesLen=%d, offset_before_tx=%d\n",
-			address, owned, txBytesLen, offset)
-
 		if len(data[offset:]) < int(txBytesLen) {
 			return nil, 0, fmt.Errorf("data too short for tx bytes: need %d, have %d", txBytesLen, len(data[offset:]))
 		}
@@ -257,16 +230,12 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 		txBytes := data[offset : offset+int(txBytesLen)]
 		offset += int(txBytesLen)
 
-		fmt.Printf("DEBUG: Insert action - first_32_tx_bytes=%x, last_32_tx_bytes=%x\n",
-			txBytes[:min(32, len(txBytes))], txBytes[max(0, len(txBytes)-32):])
-
 		// Try to decode RLP-encoded transaction
-		// Alloy's TxEnvelope RLP encoding might be different from go-ethereum's binary format
+		// Alloy's TxEnvelope RLP encoding is compatible with go-ethereum's RLP decoder
 		tx := new(types.Transaction)
 
 		// First try UnmarshalBinary (for EIP-2718 typed transactions)
 		if err := tx.UnmarshalBinary(txBytes); err != nil {
-			fmt.Printf("DEBUG: UnmarshalBinary failed: %v, trying RLP decode\n", err)
 			// If that fails, try direct RLP decoding
 			if err := rlp.DecodeBytes(txBytes, tx); err != nil {
 				return nil, 0, fmt.Errorf("failed to decode transaction (tried both UnmarshalBinary and RLP): %w", err)
