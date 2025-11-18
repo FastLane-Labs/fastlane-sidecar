@@ -230,15 +230,71 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 
 	case EventDrop:
 		// Drop { reason: EthTxPoolDropReason }
-		// For now, we skip parsing the complex reason enum and just return a generic reason
-		// TODO: Implement full reason parsing if needed
-		return DropAction{Reason: "dropped"}, offset, nil
+		// Decode the reason enum (u32 variant + optional data)
+		if len(data[offset:]) < 4 {
+			return nil, 0, fmt.Errorf("data too short for Drop reason variant")
+		}
+		reasonVariant := binary.LittleEndian.Uint32(data[offset : offset+4])
+		offset += 4
+
+		var reasonStr string
+		switch reasonVariant {
+		case 0: // NotWellFormed(TransactionError) - nested enum, read u32
+			if len(data[offset:]) < 4 {
+				return nil, 0, fmt.Errorf("data too short for NotWellFormed nested enum")
+			}
+			offset += 4 // Skip nested enum variant
+			reasonStr = "not well formed"
+		case 1: // InvalidSignature
+			reasonStr = "invalid signature"
+		case 2: // NonceTooLow
+			reasonStr = "nonce too low"
+		case 3: // FeeTooLow
+			reasonStr = "fee too low"
+		case 4: // InsufficientBalance
+			reasonStr = "insufficient balance"
+		case 5: // ExistingHigherPriority
+			reasonStr = "existing higher priority"
+		case 6: // ReplacedByHigherPriority { replacement: TxHash }
+			if len(data[offset:]) < 32 {
+				return nil, 0, fmt.Errorf("data too short for ReplacedByHigherPriority hash")
+			}
+			offset += 32 // Skip replacement hash
+			reasonStr = "replaced by higher priority"
+		case 7: // PoolFull
+			reasonStr = "pool full"
+		case 8: // PoolNotReady
+			reasonStr = "pool not ready"
+		case 9: // Internal(EthTxPoolInternalDropReason) - nested enum, read u32
+			if len(data[offset:]) < 4 {
+				return nil, 0, fmt.Errorf("data too short for Internal nested enum")
+			}
+			offset += 4 // Skip nested enum variant
+			reasonStr = "internal error"
+		default:
+			reasonStr = fmt.Sprintf("unknown reason %d", reasonVariant)
+		}
+
+		return DropAction{Reason: reasonStr}, offset, nil
 
 	case EventEvict:
 		// Evict { reason: EthTxPoolEvictReason }
-		// For now, we skip parsing the complex reason enum and just return a generic reason
-		// TODO: Implement full reason parsing if needed
-		return EvictAction{Reason: "evicted"}, offset, nil
+		// Simple enum with only Expired(0) variant
+		if len(data[offset:]) < 4 {
+			return nil, 0, fmt.Errorf("data too short for Evict reason variant")
+		}
+		reasonVariant := binary.LittleEndian.Uint32(data[offset : offset+4])
+		offset += 4
+
+		var reasonStr string
+		switch reasonVariant {
+		case 0: // Expired
+			reasonStr = "expired"
+		default:
+			reasonStr = fmt.Sprintf("unknown evict reason %d", reasonVariant)
+		}
+
+		return EvictAction{Reason: reasonStr}, offset, nil
 
 	default:
 		return nil, 0, fmt.Errorf("unknown event variant: %d", variantIndex)
