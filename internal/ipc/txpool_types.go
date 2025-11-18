@@ -81,18 +81,19 @@ func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
 	// Manually construct RLP list to match Rust's alloy_rlp encoding
 	// struct { tx: TxEnvelope, priority: U256, extra_data: Vec<u8> }
 	//
-	// The transaction bytes from alloy are already RLP-encoded TxEnvelope bytes.
-	// When encoded as part of a struct, alloy treats TxEnvelope as an opaque byte array
-	// and wraps it as an RLP byte string (not raw bytes).
+	// CRITICAL: The tx.TxRLP bytes from bincode events are ALREADY wrapped as RLP byte strings.
+	// In the bincode event serialization, alloy_rlp::encode(tx) produces wrapped bytes.
+	// We must use these bytes directly, NOT wrap them again.
+
+	// Debug: check first bytes of tx.TxRLP
+	if len(tx.TxRLP) > 4 {
+		fmt.Printf("DEBUG EncodeRLP: tx.TxRLP first 4 bytes: %x\n", tx.TxRLP[:4])
+	}
 
 	var buf bytes.Buffer
 
-	// Encode transaction as RLP byte string (wraps the already-encoded tx bytes)
-	txAsRLPString, err := rlp.EncodeToBytes(tx.TxRLP)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode tx as RLP byte string: %w", err)
-	}
-	buf.Write(txAsRLPString)
+	// Use transaction bytes directly (already wrapped from bincode event)
+	buf.Write(tx.TxRLP)
 
 	// Encode priority as RLP big int (U256)
 	priorityRLP, err := rlp.EncodeToBytes(tx.Priority)
@@ -120,8 +121,8 @@ func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
 
 	encoded := result.Bytes()
 
-	fmt.Printf("DEBUG EncodeRLP: tx_rlp_len=%d, tx_as_rlp_string_len=%d, priority_rlp_len=%d, extra_data_rlp_len=%d, total_len=%d\n",
-		len(tx.TxRLP), len(txAsRLPString), len(priorityRLP), len(extraDataRLP), len(encoded))
+	fmt.Printf("DEBUG EncodeRLP: tx_rlp_len=%d, priority_rlp_len=%d, extra_data_rlp_len=%d, total_len=%d\n",
+		len(tx.TxRLP), len(priorityRLP), len(extraDataRLP), len(encoded))
 	debugLen := 64
 	if len(encoded) < 64 {
 		debugLen = len(encoded)
