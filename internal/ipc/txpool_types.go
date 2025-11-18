@@ -88,7 +88,17 @@ func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
 		tx.ExtraData,            // Vec<u8>
 	}
 
-	return rlp.EncodeToBytes(data)
+	encoded, err := rlp.EncodeToBytes(data)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("DEBUG EncodeRLP: tx_rlp_len=%d, priority=%s, encoded_len=%d\n",
+		len(tx.TxRLP), tx.Priority.String(), len(encoded))
+	fmt.Printf("DEBUG EncodeRLP: first_32_tx_rlp=%x\n", tx.TxRLP[:min(32, len(tx.TxRLP))])
+	fmt.Printf("DEBUG EncodeRLP: first_64_encoded=%x\n", encoded[:min(64, len(encoded))])
+
+	return encoded, nil
 }
 
 // DecodeEthTxPoolSnapshot decodes a txpool snapshot from bincode format
