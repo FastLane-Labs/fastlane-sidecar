@@ -38,9 +38,10 @@ type EventAction interface {
 
 // InsertAction represents a transaction insertion event
 type InsertAction struct {
-	Address common.Address
-	Owned   bool
-	Tx      *types.Transaction // Full transaction envelope
+	Address       common.Address
+	Owned         bool
+	Tx            *types.Transaction // Full transaction envelope (for go-ethereum processing)
+	OriginalTxRLP []byte             // Original RLP bytes from alloy (for forwarding via IPC)
 }
 
 func (InsertAction) isEventAction() {}
@@ -66,7 +67,7 @@ func (EvictAction) isEventAction() {}
 
 // EthTxPoolIpcTx represents a transaction to be sent to the txpool with priority
 type EthTxPoolIpcTx struct {
-	Tx        *types.Transaction
+	TxRLP     []byte   // Original alloy RLP-encoded transaction bytes
 	Priority  *big.Int // U256 priority value
 	ExtraData []byte   // Optional extra data
 }
@@ -77,11 +78,14 @@ type EthTxPoolIpcTx struct {
 func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
 	// Create struct matching Rust EthTxPoolIpcTx
 	// struct { tx: TxEnvelope, priority: U256, extra_data: Vec<u8> }
-	// The transaction should be RLP-encoded directly, not as a byte array
+	// We need to use the original alloy RLP bytes, not re-encode with go-ethereum
+
+	// Manually construct RLP list: [tx_rlp, priority, extra_data]
+	// We use rlp.EncodeToBytes with the raw RLP bytes embedded
 	data := []interface{}{
-		tx.Tx,         // Encode transaction directly (RLP will encode it as a structure)
-		tx.Priority,   // U256
-		tx.ExtraData,  // Vec<u8>
+		rlp.RawValue(tx.TxRLP), // Embed raw RLP bytes directly
+		tx.Priority,             // U256
+		tx.ExtraData,            // Vec<u8>
 	}
 
 	return rlp.EncodeToBytes(data)
@@ -225,7 +229,11 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 		txBytes := data[offset : offset+int(txBytesLen)]
 		offset += int(txBytesLen)
 
-		// Try to decode RLP-encoded transaction
+		// Keep a copy of the original alloy RLP bytes for forwarding via IPC
+		originalTxRLP := make([]byte, len(txBytes))
+		copy(originalTxRLP, txBytes)
+
+		// Try to decode RLP-encoded transaction for go-ethereum processing
 		// Alloy's TxEnvelope RLP encoding is compatible with go-ethereum's RLP decoder
 		tx := new(types.Transaction)
 
@@ -238,9 +246,10 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 		}
 
 		return InsertAction{
-			Address: address,
-			Owned:   owned,
-			Tx:      tx,
+			Address:       address,
+			Owned:         owned,
+			Tx:            tx,
+			OriginalTxRLP: originalTxRLP,
 		}, offset, nil
 
 	case EventCommit:

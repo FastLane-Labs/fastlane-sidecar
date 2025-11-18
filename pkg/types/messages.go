@@ -34,13 +34,14 @@ type SidecarMessage struct {
 
 // PooledTransaction represents a transaction in the pool with metadata
 type PooledTransaction struct {
-	Tx         *types.Transaction
-	TxBytes    []byte
-	ReceivedAt time.Time
-	Source     string // "node" or "gateway"
-	TxType     TransactionType
-	Hash       common.Hash
-	BidData    *BidData // Bid-specific data if this is a bid transaction
+	Tx          *types.Transaction
+	TxBytes     []byte
+	OriginalRLP []byte // Original alloy RLP bytes from txpool (for forwarding back with priority)
+	ReceivedAt  time.Time
+	Source      string // "node" or "gateway"
+	TxType      TransactionType
+	Hash        common.Hash
+	BidData     *BidData // Bid-specific data if this is a bid transaction
 }
 
 // TransactionType represents the type of transaction

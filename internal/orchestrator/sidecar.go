@@ -172,8 +172,8 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 		// Track message latency (from insertion to sidecar receipt)
 		s.metrics.RecordNodeMessageLatency(time.Since(startTime).Seconds())
 
-		// Process the transaction
-		s.handleIncomingTransactionFromEvent(action.Tx)
+		// Process the transaction with original RLP bytes
+		s.handleIncomingTransactionFromEvent(action.Tx, action.OriginalTxRLP)
 
 	case ipc.CommitAction:
 		// Transaction committed to blockchain - remove from pool if exists
@@ -206,7 +206,7 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 }
 
 // handleIncomingTransactionFromEvent processes a transaction from txpool event
-func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction) {
+func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction, originalRLP []byte) {
 	startTime := time.Now()
 
 	hash := tx.Hash()
@@ -228,8 +228,8 @@ func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction) {
 	// Check if this is a fastlane bid
 	txType, bidData := s.filter.ClassifyTransaction(tx)
 
-	// Add to transaction pool with decoded tx
-	if err := s.txPool.AddTransaction(tx, txBytes, "txpool"); err != nil {
+	// Add to transaction pool with decoded tx and original RLP
+	if err := s.txPool.AddTransactionWithRLP(tx, txBytes, originalRLP, "txpool"); err != nil {
 		log.Error("Failed to add transaction to pool", "error", err)
 		return
 	}
@@ -313,7 +313,15 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 
 // streamTransaction sends a transaction with priority to the txpool
 func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int) {
-	if err := s.txpoolClient.SendTxWithPriority(tx, priority, []byte{}); err != nil {
+	// Look up the original RLP bytes from the pool
+	pooledTx := s.txPool.GetTransaction(tx.Hash())
+	if pooledTx == nil || len(pooledTx.OriginalRLP) == 0 {
+		log.Error("Cannot send transaction: original RLP not found in pool", "hash", tx.Hash().Hex())
+		s.metrics.SendErrors.Add(1)
+		return
+	}
+
+	if err := s.txpoolClient.SendTxWithPriorityRLP(pooledTx.OriginalRLP, priority, []byte{}); err != nil {
 		log.Error("Failed to send transaction to txpool", "error", err)
 		s.metrics.SendErrors.Add(1)
 		return

@@ -201,7 +201,64 @@ func (c *TxPoolIPCClient) GetEventChannel() <-chan EthTxPoolEvent {
 	return c.eventChan
 }
 
-// SendTxWithPriority sends a transaction with priority to the txpool
+// SendTxWithPriorityRLP sends a transaction with priority to the txpool using original RLP bytes
+func (c *TxPoolIPCClient) SendTxWithPriorityRLP(txRLP []byte, priority *big.Int, extraData []byte) error {
+	// Check if connected
+	if !c.connected.Load() {
+		log.Error("Not connected to txpool IPC - reconnection in progress")
+		return fmt.Errorf("not connected to txpool")
+	}
+
+	c.connMu.RLock()
+	conn := c.conn
+	c.connMu.RUnlock()
+
+	if conn == nil {
+		log.Error("Not connected to txpool IPC - reconnection in progress")
+		return fmt.Errorf("not connected to txpool")
+	}
+
+	// Create IPC message with original RLP bytes
+	ipcTx := &EthTxPoolIpcTx{
+		TxRLP:     txRLP,
+		Priority:  priority,
+		ExtraData: extraData,
+	}
+
+	// Encode to RLP
+	data, err := ipcTx.EncodeRLP()
+	if err != nil {
+		log.Error("Failed to encode IPC transaction", "error", err)
+		return fmt.Errorf("failed to encode tx: %w", err)
+	}
+
+	// Send length-delimited message (4 bytes big-endian length prefix)
+	msgLen := uint32(len(data))
+	if err := binary.Write(conn, binary.BigEndian, msgLen); err != nil {
+		log.Info("TxPool IPC connection lost, triggering reconnect", "error", err)
+		c.connected.Store(false)
+		c.connMu.Lock()
+		c.conn = nil
+		c.connMu.Unlock()
+		c.triggerReconnect()
+		return fmt.Errorf("failed to write message length: %w", err)
+	}
+
+	if _, err := conn.Write(data); err != nil {
+		log.Info("TxPool IPC connection lost, triggering reconnect", "error", err)
+		c.connected.Store(false)
+		c.connMu.Lock()
+		c.conn = nil
+		c.connMu.Unlock()
+		c.triggerReconnect()
+		return fmt.Errorf("failed to send tx to txpool: %w", err)
+	}
+
+	log.Info("Sent transaction with priority to txpool", "tx_rlp_len", len(txRLP), "priority", priority.String())
+	return nil
+}
+
+// SendTxWithPriority sends a transaction with priority to the txpool (deprecated - use SendTxWithPriorityRLP)
 func (c *TxPoolIPCClient) SendTxWithPriority(tx *types.Transaction, priority *big.Int, extraData []byte) error {
 	// Check if connected
 	if !c.connected.Load() {
