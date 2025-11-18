@@ -81,9 +81,11 @@ func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
 	// Manually construct RLP list to match Rust's alloy_rlp encoding
 	// struct { tx: TxEnvelope, priority: U256, extra_data: Vec<u8> }
 	//
-	// CRITICAL: The tx.TxRLP bytes from bincode events are ALREADY wrapped as RLP byte strings.
-	// In the bincode event serialization, alloy_rlp::encode(tx) produces wrapped bytes.
-	// We must use these bytes directly, NOT wrap them again.
+	// CRITICAL: The tx.TxRLP bytes from bincode events contain alloy_rlp::encode(TxEnvelope)
+	// which wraps typed transactions as RLP byte strings (b901a2...).
+	// However, when TxEnvelope is encoded as part of a struct with #[derive(RlpEncodable)],
+	// typed transactions (EIP-2718) are encoded WITHOUT the wrapper - just raw bytes.
+	// We need to UNWRAP the RLP byte string to get the raw transaction bytes.
 
 	// Debug: check first bytes of tx.TxRLP
 	if len(tx.TxRLP) > 4 {
@@ -92,8 +94,16 @@ func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
 
 	var buf bytes.Buffer
 
-	// Use transaction bytes directly (already wrapped from bincode event)
-	buf.Write(tx.TxRLP)
+	// Unwrap the RLP byte string to get raw transaction bytes
+	var unwrappedTx []byte
+	if err := rlp.DecodeBytes(tx.TxRLP, &unwrappedTx); err != nil {
+		return nil, fmt.Errorf("failed to unwrap tx RLP: %w", err)
+	}
+
+	fmt.Printf("DEBUG EncodeRLP: unwrapped tx first 4 bytes: %x, len=%d\n", unwrappedTx[:4], len(unwrappedTx))
+
+	// Use unwrapped transaction bytes directly
+	buf.Write(unwrappedTx)
 
 	// Encode priority as RLP big int (U256)
 	priorityRLP, err := rlp.EncodeToBytes(tx.Priority)
