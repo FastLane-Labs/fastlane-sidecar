@@ -1,8 +1,10 @@
 package ipc
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -76,29 +78,85 @@ type EthTxPoolIpcTx struct {
 
 // EncodeRLP encodes EthTxPoolIpcTx to RLP format
 func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
-	// Create struct matching Rust EthTxPoolIpcTx
+	// Manually construct RLP list to match Rust's alloy_rlp encoding
 	// struct { tx: TxEnvelope, priority: U256, extra_data: Vec<u8> }
-	// We need to use the original alloy RLP bytes, not re-encode with go-ethereum
+	//
+	// The transaction bytes from alloy are already RLP-encoded TxEnvelope bytes.
+	// When encoded as part of a struct, alloy treats TxEnvelope as an opaque byte array
+	// and wraps it as an RLP byte string (not raw bytes).
 
-	// Manually construct RLP list: [tx_rlp, priority, extra_data]
-	// We use rlp.EncodeToBytes with the raw RLP bytes embedded
-	data := []interface{}{
-		rlp.RawValue(tx.TxRLP), // Embed raw RLP bytes directly
-		tx.Priority,             // U256
-		tx.ExtraData,            // Vec<u8>
-	}
+	var buf bytes.Buffer
 
-	encoded, err := rlp.EncodeToBytes(data)
+	// Encode transaction as RLP byte string (wraps the already-encoded tx bytes)
+	txAsRLPString, err := rlp.EncodeToBytes(tx.TxRLP)
 	if err != nil {
+		return nil, fmt.Errorf("failed to encode tx as RLP byte string: %w", err)
+	}
+	buf.Write(txAsRLPString)
+
+	// Encode priority as RLP big int (U256)
+	priorityRLP, err := rlp.EncodeToBytes(tx.Priority)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode priority: %w", err)
+	}
+	buf.Write(priorityRLP)
+
+	// Encode extra_data as RLP bytes
+	extraDataRLP, err := rlp.EncodeToBytes(tx.ExtraData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode extra_data: %w", err)
+	}
+	buf.Write(extraDataRLP)
+
+	// Now wrap everything in an RLP list header
+	payload := buf.Bytes()
+
+	// Create RLP list header for the total payload
+	var result bytes.Buffer
+	if err := encodeRLPListHeader(&result, len(payload)); err != nil {
 		return nil, err
 	}
+	result.Write(payload)
 
-	fmt.Printf("DEBUG EncodeRLP: tx_rlp_len=%d, priority=%s, encoded_len=%d\n",
-		len(tx.TxRLP), tx.Priority.String(), len(encoded))
-	fmt.Printf("DEBUG EncodeRLP: first_32_tx_rlp=%x\n", tx.TxRLP[:min(32, len(tx.TxRLP))])
-	fmt.Printf("DEBUG EncodeRLP: first_64_encoded=%x\n", encoded[:min(64, len(encoded))])
+	encoded := result.Bytes()
+
+	fmt.Printf("DEBUG EncodeRLP: tx_rlp_len=%d, tx_as_rlp_string_len=%d, priority_rlp_len=%d, extra_data_rlp_len=%d, total_len=%d\n",
+		len(tx.TxRLP), len(txAsRLPString), len(priorityRLP), len(extraDataRLP), len(encoded))
+	debugLen := 64
+	if len(encoded) < 64 {
+		debugLen = len(encoded)
+	}
+	fmt.Printf("DEBUG EncodeRLP: first_64_encoded=%x\n", encoded[:debugLen])
 
 	return encoded, nil
+}
+
+// encodeRLPListHeader writes an RLP list header for the given payload length
+func encodeRLPListHeader(w io.Writer, length int) error {
+	if length < 56 {
+		// Short list: 0xc0 + length
+		return binary.Write(w, binary.BigEndian, uint8(0xc0+length))
+	}
+	// Long list: 0xf7 + length_of_length + length_bytes
+	lenBytes := encodeLength(length)
+	if err := binary.Write(w, binary.BigEndian, uint8(0xf7+len(lenBytes))); err != nil {
+		return err
+	}
+	_, err := w.Write(lenBytes)
+	return err
+}
+
+// encodeLength encodes an integer as big-endian bytes (minimum representation)
+func encodeLength(n int) []byte {
+	if n == 0 {
+		return []byte{0}
+	}
+	var buf []byte
+	for n > 0 {
+		buf = append([]byte{byte(n & 0xff)}, buf...)
+		n >>= 8
+	}
+	return buf
 }
 
 // DecodeEthTxPoolSnapshot decodes a txpool snapshot from bincode format
