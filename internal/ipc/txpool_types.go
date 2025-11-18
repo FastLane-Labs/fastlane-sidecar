@@ -75,18 +75,13 @@ type EthTxPoolIpcTx struct {
 
 // EncodeRLP encodes EthTxPoolIpcTx to RLP format
 func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
-	// Encode transaction to RLP
-	txBytes, err := tx.Tx.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
 	// Create struct matching Rust EthTxPoolIpcTx
-	// struct { tx: Vec<u8>, priority: U256, extra_data: Vec<u8> }
+	// struct { tx: TxEnvelope, priority: U256, extra_data: Vec<u8> }
+	// The transaction should be RLP-encoded directly, not as a byte array
 	data := []interface{}{
-		txBytes,
-		tx.Priority,
-		tx.ExtraData,
+		tx.Tx,         // Encode transaction directly (RLP will encode it as a structure)
+		tx.Priority,   // U256
+		tx.ExtraData,  // Vec<u8>
 	}
 
 	return rlp.EncodeToBytes(data)
