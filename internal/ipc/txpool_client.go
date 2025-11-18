@@ -114,6 +114,13 @@ func (c *TxPoolIPCClient) readEvents(conn net.Conn) {
 		c.triggerReconnect()
 	}()
 
+	// First message is always the snapshot
+	if err := c.readSnapshot(conn); err != nil {
+		log.Error("Failed to read initial snapshot", "error", err)
+		return
+	}
+
+	// Then read events in a loop
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -135,7 +142,7 @@ func (c *TxPoolIPCClient) readEvents(conn net.Conn) {
 				return
 			}
 
-			// Decode RLP-encoded Vec<EthTxPoolEvent>
+			// Decode bincode-encoded Vec<EthTxPoolEvent>
 			events, err := DecodeEthTxPoolEvents(msgData)
 			if err != nil {
 				log.Error("Failed to decode txpool events", "error", err)
@@ -154,6 +161,30 @@ func (c *TxPoolIPCClient) readEvents(conn net.Conn) {
 			log.Debug("Received txpool events", "count", len(events))
 		}
 	}
+}
+
+// readSnapshot reads and processes the initial snapshot from the txpool
+func (c *TxPoolIPCClient) readSnapshot(conn net.Conn) error {
+	// Read length-delimited message (4 bytes big-endian length prefix)
+	var msgLen uint32
+	if err := binary.Read(conn, binary.BigEndian, &msgLen); err != nil {
+		return fmt.Errorf("failed to read snapshot length: %w", err)
+	}
+
+	// Read message data
+	msgData := make([]byte, msgLen)
+	if _, err := io.ReadFull(conn, msgData); err != nil {
+		return fmt.Errorf("failed to read snapshot data: %w", err)
+	}
+
+	// Decode bincode-encoded EthTxPoolSnapshot
+	snapshot, err := DecodeEthTxPoolSnapshot(msgData)
+	if err != nil {
+		return fmt.Errorf("failed to decode snapshot: %w", err)
+	}
+
+	log.Info("Received txpool snapshot", "tx_count", len(snapshot.TxHashes))
+	return nil
 }
 
 // triggerReconnect signals the reconnection loop to attempt connection

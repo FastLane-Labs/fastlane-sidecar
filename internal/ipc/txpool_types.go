@@ -1,12 +1,19 @@
 package ipc
 
 import (
+	"encoding/binary"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 )
+
+// EthTxPoolSnapshot represents the initial snapshot of txpool state
+type EthTxPoolSnapshot struct {
+	TxHashes []common.Hash
+}
 
 // EthTxPoolEventType represents the type of txpool event
 type EthTxPoolEventType uint8
@@ -85,116 +92,155 @@ func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
 	return rlp.EncodeToBytes(data)
 }
 
-// DecodeEthTxPoolEvents decodes a slice of EthTxPoolEvent from RLP
-func DecodeEthTxPoolEvents(data []byte) ([]EthTxPoolEvent, error) {
-	var events []EthTxPoolEvent
-
-	// The Rust side sends Vec<EthTxPoolEvent> encoded as RLP list
-	var rawEvents [][]byte
-	if err := rlp.DecodeBytes(data, &rawEvents); err != nil {
-		return nil, err
+// DecodeEthTxPoolSnapshot decodes a txpool snapshot from bincode format
+func DecodeEthTxPoolSnapshot(data []byte) (*EthTxPoolSnapshot, error) {
+	// Bincode format for HashSet<TxHash> is encoded as Vec<TxHash>
+	// Vec format: [length:8 bytes little-endian][elements...]
+	// Each TxHash is 32 bytes
+	if len(data) < 8 {
+		return nil, fmt.Errorf("data too short for snapshot Vec length: %d bytes", len(data))
 	}
 
-	for _, rawEvent := range rawEvents {
-		event, err := decodeEthTxPoolEvent(rawEvent)
+	vecLen := binary.LittleEndian.Uint64(data[:8])
+	offset := 8
+
+	txHashes := make([]common.Hash, 0, vecLen)
+	for i := uint64(0); i < vecLen; i++ {
+		if len(data[offset:]) < 32 {
+			return nil, fmt.Errorf("data too short for tx_hash %d: need 32, have %d", i, len(data[offset:]))
+		}
+
+		var txHash common.Hash
+		copy(txHash[:], data[offset:offset+32])
+		txHashes = append(txHashes, txHash)
+		offset += 32
+	}
+
+	return &EthTxPoolSnapshot{
+		TxHashes: txHashes,
+	}, nil
+}
+
+// DecodeEthTxPoolEvents decodes a slice of EthTxPoolEvent from bincode format
+func DecodeEthTxPoolEvents(data []byte) ([]EthTxPoolEvent, error) {
+	// Bincode format for Vec<T>: [length:8 bytes little-endian][elements...]
+	if len(data) < 8 {
+		return nil, fmt.Errorf("data too short for Vec length: %d bytes", len(data))
+	}
+
+	vecLen := binary.LittleEndian.Uint64(data[:8])
+	offset := 8
+
+	events := make([]EthTxPoolEvent, 0, vecLen)
+	for i := uint64(0); i < vecLen; i++ {
+		event, bytesRead, err := decodeEthTxPoolEvent(data[offset:])
 		if err != nil {
-			continue // Skip malformed events
+			return nil, fmt.Errorf("failed to decode event %d: %w", i, err)
 		}
 		events = append(events, event)
+		offset += bytesRead
 	}
 
 	return events, nil
 }
 
-// decodeEthTxPoolEvent decodes a single EthTxPoolEvent from RLP
-func decodeEthTxPoolEvent(data []byte) (EthTxPoolEvent, error) {
-	// EthTxPoolEvent is encoded as: [tx_hash, action]
-	// where action is an enum encoded as: [variant_index, data...]
+// decodeEthTxPoolEvent decodes a single EthTxPoolEvent from bincode format
+// Returns the event and number of bytes consumed
+func decodeEthTxPoolEvent(data []byte) (EthTxPoolEvent, int, error) {
+	// EthTxPoolEvent structure:
+	// - tx_hash: [32 bytes]
+	// - action: EthTxPoolEventType (enum)
 
-	var raw struct {
-		TxHash     common.Hash
-		ActionData []byte
+	if len(data) < 32 {
+		return EthTxPoolEvent{}, 0, fmt.Errorf("data too short for tx_hash: %d bytes", len(data))
 	}
 
-	if err := rlp.DecodeBytes(data, &raw); err != nil {
-		return EthTxPoolEvent{}, err
-	}
+	var txHash common.Hash
+	copy(txHash[:], data[:32])
+	offset := 32
 
-	// Decode action enum
-	action, err := decodeEventAction(raw.ActionData)
+	// Decode action enum (starts with u32 variant index)
+	action, bytesRead, err := decodeEventAction(data[offset:])
 	if err != nil {
-		return EthTxPoolEvent{}, err
+		return EthTxPoolEvent{}, 0, fmt.Errorf("failed to decode action: %w", err)
 	}
+	offset += bytesRead
 
 	return EthTxPoolEvent{
-		TxHash: raw.TxHash,
+		TxHash: txHash,
 		Action: action,
-	}, nil
+	}, offset, nil
 }
 
-// decodeEventAction decodes an EventAction from RLP
-func decodeEventAction(data []byte) (EventAction, error) {
-	// Enum is encoded as list: [variant_index, fields...]
-	var rawAction []interface{}
-	if err := rlp.DecodeBytes(data, &rawAction); err != nil {
-		return nil, err
+// decodeEventAction decodes an EventAction from bincode format
+// Returns the action and number of bytes consumed
+func decodeEventAction(data []byte) (EventAction, int, error) {
+	// Bincode enum format: [variant_index:u32 little-endian][variant_data...]
+	if len(data) < 4 {
+		return nil, 0, fmt.Errorf("data too short for enum variant: %d bytes", len(data))
 	}
 
-	if len(rawAction) == 0 {
-		return nil, rlp.EOL
-	}
-
-	// First element is variant index
-	variantIndex, ok := rawAction[0].(uint64)
-	if !ok {
-		return nil, rlp.EOL
-	}
+	variantIndex := binary.LittleEndian.Uint32(data[:4])
+	offset := 4
 
 	switch EthTxPoolEventType(variantIndex) {
 	case EventInsert:
-		// Insert { address, owned, tx }
-		if len(rawAction) < 4 {
-			return nil, rlp.EOL
+		// Insert { address: Address, owned: bool, tx: TxEnvelope }
+		// address: [20 bytes]
+		// owned: [1 byte] (bool as u8)
+		// tx: Vec<u8> [length:8 bytes][tx_bytes] (RLP-encoded transaction)
+
+		if len(data[offset:]) < 20+1+8 {
+			return nil, 0, fmt.Errorf("data too short for Insert action")
 		}
 
-		addressBytes, _ := rawAction[1].([]byte)
-		ownedUint, _ := rawAction[2].(uint64)
-		txBytes, _ := rawAction[3].([]byte)
-
 		var address common.Address
-		copy(address[:], addressBytes)
+		copy(address[:], data[offset:offset+20])
+		offset += 20
 
+		owned := data[offset] != 0
+		offset += 1
+
+		// Decode tx Vec<u8>
+		txBytesLen := binary.LittleEndian.Uint64(data[offset : offset+8])
+		offset += 8
+
+		if len(data[offset:]) < int(txBytesLen) {
+			return nil, 0, fmt.Errorf("data too short for tx bytes: need %d, have %d", txBytesLen, len(data[offset:]))
+		}
+
+		txBytes := data[offset : offset+int(txBytesLen)]
+		offset += int(txBytesLen)
+
+		// Unmarshal RLP-encoded transaction
 		tx := new(types.Transaction)
 		if err := tx.UnmarshalBinary(txBytes); err != nil {
-			return nil, err
+			return nil, 0, fmt.Errorf("failed to unmarshal transaction: %w", err)
 		}
 
 		return InsertAction{
 			Address: address,
-			Owned:   ownedUint != 0,
+			Owned:   owned,
 			Tx:      tx,
-		}, nil
+		}, offset, nil
 
 	case EventCommit:
-		return CommitAction{}, nil
+		// Commit (unit variant, no data)
+		return CommitAction{}, offset, nil
 
 	case EventDrop:
-		// Drop { reason }
-		if len(rawAction) < 2 {
-			return DropAction{Reason: "unknown"}, nil
-		}
-		reason, _ := rawAction[1].(string)
-		return DropAction{Reason: reason}, nil
+		// Drop { reason: EthTxPoolDropReason }
+		// For now, we skip parsing the complex reason enum and just return a generic reason
+		// TODO: Implement full reason parsing if needed
+		return DropAction{Reason: "dropped"}, offset, nil
 
 	case EventEvict:
-		// Evict { reason }
-		if len(rawAction) < 2 {
-			return EvictAction{Reason: "unknown"}, nil
-		}
-		reason, _ := rawAction[1].(string)
-		return EvictAction{Reason: reason}, nil
+		// Evict { reason: EthTxPoolEvictReason }
+		// For now, we skip parsing the complex reason enum and just return a generic reason
+		// TODO: Implement full reason parsing if needed
+		return EvictAction{Reason: "evicted"}, offset, nil
 
 	default:
-		return nil, rlp.EOL
+		return nil, 0, fmt.Errorf("unknown event variant: %d", variantIndex)
 	}
 }
