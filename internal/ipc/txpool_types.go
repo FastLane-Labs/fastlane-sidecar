@@ -260,10 +260,17 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 		fmt.Printf("DEBUG: Insert action - first_32_tx_bytes=%x, last_32_tx_bytes=%x\n",
 			txBytes[:min(32, len(txBytes))], txBytes[max(0, len(txBytes)-32):])
 
-		// Unmarshal RLP-encoded transaction
+		// Try to decode RLP-encoded transaction
+		// Alloy's TxEnvelope RLP encoding might be different from go-ethereum's binary format
 		tx := new(types.Transaction)
+
+		// First try UnmarshalBinary (for EIP-2718 typed transactions)
 		if err := tx.UnmarshalBinary(txBytes); err != nil {
-			return nil, 0, fmt.Errorf("failed to unmarshal transaction: %w", err)
+			fmt.Printf("DEBUG: UnmarshalBinary failed: %v, trying RLP decode\n", err)
+			// If that fails, try direct RLP decoding
+			if err := rlp.DecodeBytes(txBytes, tx); err != nil {
+				return nil, 0, fmt.Errorf("failed to decode transaction (tried both UnmarshalBinary and RLP): %w", err)
+			}
 		}
 
 		return InsertAction{
