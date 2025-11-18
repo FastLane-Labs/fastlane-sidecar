@@ -158,6 +158,13 @@ func min(a, b int) int {
 	return b
 }
 
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // decodeEthTxPoolEvent decodes a single EthTxPoolEvent from bincode format
 // Returns the event and number of bytes consumed
 func decodeEthTxPoolEvent(data []byte) (EthTxPoolEvent, int, error) {
@@ -240,12 +247,18 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 		txBytesLen := binary.LittleEndian.Uint64(data[offset : offset+8])
 		offset += 8
 
+		fmt.Printf("DEBUG: Insert action - address=%x, owned=%v, txBytesLen=%d, offset_before_tx=%d\n",
+			address, owned, txBytesLen, offset)
+
 		if len(data[offset:]) < int(txBytesLen) {
 			return nil, 0, fmt.Errorf("data too short for tx bytes: need %d, have %d", txBytesLen, len(data[offset:]))
 		}
 
 		txBytes := data[offset : offset+int(txBytesLen)]
 		offset += int(txBytesLen)
+
+		fmt.Printf("DEBUG: Insert action - first_32_tx_bytes=%x, last_32_tx_bytes=%x\n",
+			txBytes[:min(32, len(txBytes))], txBytes[max(0, len(txBytes)-32):])
 
 		// Unmarshal RLP-encoded transaction
 		tx := new(types.Transaction)
