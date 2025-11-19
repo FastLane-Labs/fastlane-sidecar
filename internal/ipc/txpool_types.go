@@ -3,6 +3,7 @@ package ipc
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -75,14 +76,36 @@ type EthTxPoolIpcTx struct {
 
 // RLP encoding/decoding helpers
 
-// EncodeRLP encodes EthTxPoolIpcTx to RLP format matching Rust's alloy_rlp encoding
-// Rust struct: { tx: TxEnvelope, priority: U256, extra_data: Vec<u8> }
-// Use go-ethereum's RLP encoder which will automatically create the proper structure
-func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
-	// Use go-ethereum's RLP encoder to encode the struct
-	// This will create: RLP_LIST[rlp(TxRLP), rlp(Priority), rlp(ExtraData)]
-	// where each field is properly RLP-encoded according to its type
-	return rlp.EncodeToBytes(tx)
+// EncodeRLP implements custom RLP encoding to match Rust's alloy_rlp format
+// All fields are RLP-encoded as standard types (bytes, uint, bytes)
+func (tx *EthTxPoolIpcTx) EncodeRLP(w io.Writer) error {
+	// Use standard RLP encoding for the struct
+	// TxRLP is encoded as a byte string, Priority as uint, ExtraData as byte string
+	return rlp.Encode(w, []interface{}{
+		tx.TxRLP,
+		tx.Priority,
+		tx.ExtraData,
+	})
+}
+
+// DecodeRLP implements custom RLP decoding to match Rust's alloy_rlp format
+func (tx *EthTxPoolIpcTx) DecodeRLP(s *rlp.Stream) error {
+	// Decode as standard RLP list of [bytes, uint, bytes]
+	var temp struct {
+		TxRLP     []byte
+		Priority  *big.Int
+		ExtraData []byte
+	}
+
+	if err := s.Decode(&temp); err != nil {
+		return err
+	}
+
+	tx.TxRLP = temp.TxRLP
+	tx.Priority = temp.Priority
+	tx.ExtraData = temp.ExtraData
+
+	return nil
 }
 
 // DecodeEthTxPoolSnapshot decodes a txpool snapshot from bincode format

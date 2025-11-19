@@ -75,8 +75,8 @@ func TestEthTxPoolIpcTxRLPRoundtrip(t *testing.T) {
 		ExtraData: extraData,
 	}
 
-	// Encode using our EncodeRLP method
-	encoded, err := ipcTx.EncodeRLP()
+	// Encode using our custom EncodeRLP method (via rlp.EncodeToBytes)
+	encoded, err := rlp.EncodeToBytes(ipcTx)
 	if err != nil {
 		t.Fatalf("Failed to encode EthTxPoolIpcTx: %v", err)
 	}
@@ -147,8 +147,8 @@ func TestEthTxPoolIpcTxRLPStructure(t *testing.T) {
 		ExtraData: extraData,
 	}
 
-	// Encode
-	encoded, err := ipcTx.EncodeRLP()
+	// Encode using custom EncodeRLP
+	encoded, err := rlp.EncodeToBytes(ipcTx)
 	if err != nil {
 		t.Fatalf("Failed to encode: %v", err)
 	}

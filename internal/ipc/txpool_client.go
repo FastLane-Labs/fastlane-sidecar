@@ -13,6 +13,7 @@ import (
 
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 // TxPoolIPCClient handles bidirectional communication with monad txpool via Unix socket
@@ -233,8 +234,8 @@ func (c *TxPoolIPCClient) SendTxWithPriorityRLP(txRLP []byte, priority *big.Int,
 		ExtraData: extraData,
 	}
 
-	// Encode to RLP
-	data, err := ipcTx.EncodeRLP()
+	// Encode to RLP using our custom EncodeRLP method
+	data, err := rlp.EncodeToBytes(ipcTx)
 	if err != nil {
 		log.Error("Failed to encode IPC transaction", "error", err)
 		return fmt.Errorf("failed to encode tx: %w", err)
