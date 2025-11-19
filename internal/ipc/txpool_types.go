@@ -1,10 +1,8 @@
 package ipc
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -68,8 +66,9 @@ type EvictAction struct {
 func (EvictAction) isEventAction() {}
 
 // EthTxPoolIpcTx represents a transaction to be sent to the txpool with priority
+// This must match Rust's struct exactly for RLP encoding/decoding
 type EthTxPoolIpcTx struct {
-	TxRLP     []byte   // Original alloy RLP-encoded transaction bytes
+	TxRLP     []byte   // Original alloy RLP-encoded transaction bytes (will be decoded as raw bytes by RLP)
 	Priority  *big.Int // U256 priority value
 	ExtraData []byte   // Optional extra data
 }
@@ -78,67 +77,12 @@ type EthTxPoolIpcTx struct {
 
 // EncodeRLP encodes EthTxPoolIpcTx to RLP format matching Rust's alloy_rlp encoding
 // Rust struct: { tx: TxEnvelope, priority: U256, extra_data: Vec<u8> }
-// With #[derive(RlpEncodable)], this encodes as: RLP_LIST[rlp(tx), rlp(priority), rlp(extra_data)]
+// Use go-ethereum's RLP encoder which will automatically create the proper structure
 func (tx *EthTxPoolIpcTx) EncodeRLP() ([]byte, error) {
-	var buf bytes.Buffer
-
-	// Write tx RLP as-is (already RLP-encoded by alloy)
-	// The TxRLP from bincode events is alloy's RLP encoding of TxEnvelope
-	buf.Write(tx.TxRLP)
-
-	// Encode priority as RLP big int (U256)
-	priorityRLP, err := rlp.EncodeToBytes(tx.Priority)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode priority: %w", err)
-	}
-	buf.Write(priorityRLP)
-
-	// Encode extra_data as RLP bytes
-	extraDataRLP, err := rlp.EncodeToBytes(tx.ExtraData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode extra_data: %w", err)
-	}
-	buf.Write(extraDataRLP)
-
-	// Now wrap everything in an RLP list header
-	payload := buf.Bytes()
-
-	// Create RLP list header for the total payload
-	var result bytes.Buffer
-	if err := encodeRLPListHeader(&result, len(payload)); err != nil {
-		return nil, err
-	}
-	result.Write(payload)
-
-	return result.Bytes(), nil
-}
-
-// encodeRLPListHeader writes an RLP list header for the given payload length
-func encodeRLPListHeader(w io.Writer, length int) error {
-	if length < 56 {
-		// Short list: 0xc0 + length
-		return binary.Write(w, binary.BigEndian, uint8(0xc0+length))
-	}
-	// Long list: 0xf7 + length_of_length + length_bytes
-	lenBytes := encodeLength(length)
-	if err := binary.Write(w, binary.BigEndian, uint8(0xf7+len(lenBytes))); err != nil {
-		return err
-	}
-	_, err := w.Write(lenBytes)
-	return err
-}
-
-// encodeLength encodes an integer as big-endian bytes (minimum representation)
-func encodeLength(n int) []byte {
-	if n == 0 {
-		return []byte{0}
-	}
-	var buf []byte
-	for n > 0 {
-		buf = append([]byte{byte(n & 0xff)}, buf...)
-		n >>= 8
-	}
-	return buf
+	// Use go-ethereum's RLP encoder to encode the struct
+	// This will create: RLP_LIST[rlp(TxRLP), rlp(Priority), rlp(ExtraData)]
+	// where each field is properly RLP-encoded according to its type
+	return rlp.EncodeToBytes(tx)
 }
 
 // DecodeEthTxPoolSnapshot decodes a txpool snapshot from bincode format
