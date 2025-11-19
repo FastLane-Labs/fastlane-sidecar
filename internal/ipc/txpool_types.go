@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -77,15 +78,69 @@ type EthTxPoolIpcTx struct {
 // RLP encoding/decoding helpers
 
 // EncodeRLP implements custom RLP encoding to match Rust's alloy_rlp format
-// All fields are RLP-encoded as standard types (bytes, uint, bytes)
+// Based on testing against Rust alloy_rlp::encode(EthTxPoolIpcTx)
 func (tx *EthTxPoolIpcTx) EncodeRLP(w io.Writer) error {
-	// Use standard RLP encoding for the struct
-	// TxRLP is encoded as a byte string, Priority as uint, ExtraData as byte string
-	return rlp.Encode(w, []interface{}{
-		tx.TxRLP,
-		tx.Priority,
-		tx.ExtraData,
-	})
+	var buf bytes.Buffer
+
+	// Write tx RLP bytes directly (TxEnvelope network encoding)
+	buf.Write(tx.TxRLP)
+
+	// Encode priority as RLP big int
+	priorityRLP, err := rlp.EncodeToBytes(tx.Priority)
+	if err != nil {
+		return fmt.Errorf("failed to encode priority: %w", err)
+	}
+	buf.Write(priorityRLP)
+
+	// Encode extra data
+	// CRITICAL: Rust's alloy_rlp encodes empty Vec<u8> as 0xc0 (empty list), not 0x80 (empty string)
+	if len(tx.ExtraData) == 0 {
+		buf.WriteByte(0xc0) // Empty list in RLP
+	} else {
+		extraDataRLP, err := rlp.EncodeToBytes(tx.ExtraData)
+		if err != nil {
+			return fmt.Errorf("failed to encode extra_data: %w", err)
+		}
+		buf.Write(extraDataRLP)
+	}
+
+	// Wrap everything in RLP list header
+	payload := buf.Bytes()
+	var result bytes.Buffer
+	if err := encodeRLPListHeader(&result, len(payload)); err != nil {
+		return err
+	}
+	result.Write(payload)
+
+	// Write to output
+	_, err = w.Write(result.Bytes())
+	return err
+}
+
+// encodeRLPListHeader writes an RLP list header for the given payload length
+func encodeRLPListHeader(w io.Writer, length int) error {
+	if length < 56 {
+		return binary.Write(w, binary.BigEndian, uint8(0xc0+length))
+	}
+	lenBytes := encodeLength(length)
+	if err := binary.Write(w, binary.BigEndian, uint8(0xf7+len(lenBytes))); err != nil {
+		return err
+	}
+	_, err := w.Write(lenBytes)
+	return err
+}
+
+// encodeLength encodes an integer as big-endian bytes (minimum representation)
+func encodeLength(n int) []byte {
+	if n == 0 {
+		return []byte{0}
+	}
+	var buf []byte
+	for n > 0 {
+		buf = append([]byte{byte(n & 0xff)}, buf...)
+		n >>= 8
+	}
+	return buf
 }
 
 // DecodeRLP implements custom RLP decoding to match Rust's alloy_rlp format

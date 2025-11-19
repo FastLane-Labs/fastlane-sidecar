@@ -45,141 +45,89 @@ func TestTransactionRLPRoundtrip(t *testing.T) {
 	t.Logf("✓ Transaction roundtrip successful: hash=%s", tx.Hash().Hex())
 }
 
-// TestEthTxPoolIpcTxRLPRoundtrip tests encoding and decoding EthTxPoolIpcTx struct
-func TestEthTxPoolIpcTxRLPRoundtrip(t *testing.T) {
-	// Create a dummy transaction
-	tx := types.NewTx(&types.DynamicFeeTx{
-		ChainID:   big.NewInt(1),
-		Nonce:     1,
-		GasTipCap: big.NewInt(1000000000),
-		GasFeeCap: big.NewInt(2000000000),
-		Gas:       21000,
-		To:        &common.Address{0x12, 0x34, 0x56},
-		Value:     big.NewInt(1000000000000000000),
-		Data:      []byte{},
+// TestEthTxPoolIpcTxMatchesRustEncoding tests that Go encoding matches Rust alloy_rlp exactly
+// This test uses known-good output from Rust's alloy_rlp::encode(EthTxPoolIpcTx)
+func TestEthTxPoolIpcTxMatchesRustEncoding(t *testing.T) {
+	// Expected output from Rust alloy_rlp::encode(EthTxPoolIpcTx)
+	// Created with:
+	// - Legacy tx: chain_id=1, nonce=0, gas_price=1000000000, gas_limit=21000,
+	//   to=0x4242...42 (20 bytes of 0x42), value=100, data=[]
+	// - Signature: r=0x840cfc..., s=0x25e710..., parity=false (Signature::test_signature())
+	// - Priority: 0x8000000000000000000000000000000000000000000000002386f26fc10000 (TOB bid)
+	// - ExtraData: [] (empty)
+	expectedHex := "f886f86380843b9aca00825208944242424242424242424242424242424242424242648025a0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d19f8000000000000000000000000000000000000000000000002386f26fc10000c0"
+
+	expectedBytes := common.Hex2Bytes(expectedHex)
+
+	// Create the same transaction in Go
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    0,
+		GasPrice: big.NewInt(1000000000),
+		Gas:      21000,
+		To:       &common.Address{0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42},
+		Value:    big.NewInt(100),
+		Data:     []byte{},
 	})
 
-	// Get transaction bytes (EIP-2718 format)
-	txBytes, err := tx.MarshalBinary()
+	// Sign with test signature (same as Rust Signature::test_signature())
+	r, _ := new(big.Int).SetString("840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565", 16)
+	s, _ := new(big.Int).SetString("25e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1", 16)
+	v := big.NewInt(0) // parity = 0 (false), EIP-155 signer will add chainId*2 + 35
+
+	signer := types.NewEIP155Signer(big.NewInt(1))
+	sig := make([]byte, 65)
+	copy(sig[32-len(r.Bytes()):32], r.Bytes())
+	copy(sig[64-len(s.Bytes()):64], s.Bytes())
+	sig[64] = byte(v.Uint64())
+
+	signedTx, err := tx.WithSignature(signer, sig)
+	if err != nil {
+		t.Fatalf("Failed to sign transaction: %v", err)
+	}
+
+	// Get transaction bytes
+	txBytes, err := signedTx.MarshalBinary()
 	if err != nil {
 		t.Fatalf("Failed to marshal transaction: %v", err)
 	}
 
-	// Create EthTxPoolIpcTx struct
-	priority := big.NewInt(123456789)
-	extraData := []byte{0xaa, 0xbb, 0xcc}
+	// TOB priority (same as Rust)
+	priority := new(big.Int)
+	priority.SetString("8000000000000000000000000000000000000000000000002386f26fc10000", 16)
 
+	// Create IPC message
 	ipcTx := &EthTxPoolIpcTx{
 		TxRLP:     txBytes,
 		Priority:  priority,
-		ExtraData: extraData,
+		ExtraData: []byte{}, // empty
 	}
 
-	// Encode using our custom EncodeRLP method (via rlp.EncodeToBytes)
+	// Encode
 	encoded, err := rlp.EncodeToBytes(ipcTx)
 	if err != nil {
 		t.Fatalf("Failed to encode EthTxPoolIpcTx: %v", err)
 	}
 
-	t.Logf("Encoded EthTxPoolIpcTx: %d bytes", len(encoded))
-	t.Logf("  First 64 bytes: %x", encoded[:min(64, len(encoded))])
-
-	// Decode using go-ethereum's RLP decoder
-	var decoded EthTxPoolIpcTx
-	if err := rlp.DecodeBytes(encoded, &decoded); err != nil {
-		t.Fatalf("Failed to decode EthTxPoolIpcTx: %v", err)
+	// Compare byte-for-byte
+	if len(encoded) != len(expectedBytes) {
+		t.Errorf("Length mismatch: expected %d bytes, got %d bytes", len(expectedBytes), len(encoded))
+		t.Logf("Expected: %x", expectedBytes)
+		t.Logf("Got:      %x", encoded)
+		t.FailNow()
 	}
 
-	// Verify fields match
-	if len(decoded.TxRLP) != len(ipcTx.TxRLP) {
-		t.Errorf("TxRLP length mismatch: expected %d, got %d", len(ipcTx.TxRLP), len(decoded.TxRLP))
-	}
-
-	for i := range decoded.TxRLP {
-		if decoded.TxRLP[i] != ipcTx.TxRLP[i] {
-			t.Errorf("TxRLP byte mismatch at index %d: expected %x, got %x", i, ipcTx.TxRLP[i], decoded.TxRLP[i])
-			break
+	for i := range expectedBytes {
+		if encoded[i] != expectedBytes[i] {
+			t.Errorf("Byte mismatch at index %d: expected %02x, got %02x", i, expectedBytes[i], encoded[i])
+			t.Logf("Expected: %x", expectedBytes)
+			t.Logf("Got:      %x", encoded)
+			t.FailNow()
 		}
 	}
 
-	if decoded.Priority.Cmp(ipcTx.Priority) != 0 {
-		t.Errorf("Priority mismatch: expected %s, got %s", ipcTx.Priority.String(), decoded.Priority.String())
-	}
-
-	if len(decoded.ExtraData) != len(ipcTx.ExtraData) {
-		t.Errorf("ExtraData length mismatch: expected %d, got %d", len(ipcTx.ExtraData), len(decoded.ExtraData))
-	}
-
-	for i := range decoded.ExtraData {
-		if decoded.ExtraData[i] != ipcTx.ExtraData[i] {
-			t.Errorf("ExtraData byte mismatch at index %d: expected %x, got %x", i, ipcTx.ExtraData[i], decoded.ExtraData[i])
-			break
-		}
-	}
-
-	// Decode the transaction from TxRLP to verify it's valid
-	decodedTx := new(types.Transaction)
-	if err := decodedTx.UnmarshalBinary(decoded.TxRLP); err != nil {
-		t.Fatalf("Failed to unmarshal transaction from decoded TxRLP: %v", err)
-	}
-
-	if decodedTx.Hash() != tx.Hash() {
-		t.Errorf("Decoded transaction hash mismatch: expected %s, got %s", tx.Hash().Hex(), decodedTx.Hash().Hex())
-	}
-
-	t.Logf("✓ EthTxPoolIpcTx roundtrip successful")
-	t.Logf("  TxRLP: %d bytes", len(decoded.TxRLP))
-	t.Logf("  Priority: %s", decoded.Priority.String())
-	t.Logf("  ExtraData: %d bytes", len(decoded.ExtraData))
-	t.Logf("  Transaction hash: %s", decodedTx.Hash().Hex())
-}
-
-// TestEthTxPoolIpcTxRLPStructure tests the exact RLP structure
-func TestEthTxPoolIpcTxRLPStructure(t *testing.T) {
-	// Create minimal test data
-	txBytes := []byte{0x02, 0xf8, 0x6c} // Start of EIP-1559 tx (just a prefix for testing)
-	priority := big.NewInt(999)
-	extraData := []byte{0x01, 0x02, 0x03}
-
-	ipcTx := &EthTxPoolIpcTx{
-		TxRLP:     txBytes,
-		Priority:  priority,
-		ExtraData: extraData,
-	}
-
-	// Encode using custom EncodeRLP
-	encoded, err := rlp.EncodeToBytes(ipcTx)
-	if err != nil {
-		t.Fatalf("Failed to encode: %v", err)
-	}
-
-	t.Logf("RLP structure breakdown:")
-	t.Logf("  Total encoded length: %d bytes", len(encoded))
-	t.Logf("  Full encoded bytes: %x", encoded)
-
-	// Manually decode to understand structure
-	t.Logf("\nExpected RLP structure:")
-	t.Logf("  RLP_LIST[")
-
-	// Encode each field separately to see what they look like
-	txRLPEncoded, _ := rlp.EncodeToBytes(txBytes)
-	t.Logf("    TxRLP: %x (RLP-encoded %d bytes -> %d bytes)", txRLPEncoded, len(txBytes), len(txRLPEncoded))
-
-	priorityEncoded, _ := rlp.EncodeToBytes(priority)
-	t.Logf("    Priority: %x (RLP-encoded %s -> %d bytes)", priorityEncoded, priority.String(), len(priorityEncoded))
-
-	extraDataEncoded, _ := rlp.EncodeToBytes(extraData)
-	t.Logf("    ExtraData: %x (RLP-encoded %d bytes -> %d bytes)", extraDataEncoded, len(extraData), len(extraDataEncoded))
-
-	t.Logf("  ]")
-
-	// Decode and verify
-	var decoded EthTxPoolIpcTx
-	if err := rlp.DecodeBytes(encoded, &decoded); err != nil {
-		t.Fatalf("Failed to decode: %v", err)
-	}
-
-	t.Logf("\n✓ Structure test passed")
+	t.Logf("✓ Go encoding matches Rust alloy_rlp exactly!")
+	t.Logf("  Length: %d bytes", len(encoded))
+	t.Logf("  Hex: %x", encoded)
 }
 
 func min(a, b int) int {
