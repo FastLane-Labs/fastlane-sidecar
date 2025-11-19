@@ -110,6 +110,7 @@ func (c *TxPoolIPCClient) reconnectionLoop() {
 // readEvents reads events from the connection
 func (c *TxPoolIPCClient) readEvents(conn net.Conn) {
 	defer func() {
+		log.Info("TxPool IPC read loop exited, triggering reconnection")
 		c.connected.Store(false)
 		c.triggerReconnect()
 	}()
@@ -124,12 +125,15 @@ func (c *TxPoolIPCClient) readEvents(conn net.Conn) {
 	for {
 		select {
 		case <-c.ctx.Done():
+			log.Info("TxPool IPC read loop stopping due to context cancellation")
 			return
 		default:
 			// Read length-delimited message (4 bytes big-endian length prefix)
 			var msgLen uint32
 			if err := binary.Read(conn, binary.BigEndian, &msgLen); err != nil {
-				if err != io.EOF {
+				if err == io.EOF {
+					log.Warn("TxPool IPC connection closed by peer (EOF)")
+				} else {
 					log.Error("Error reading message length from txpool", "error", err)
 				}
 				return
@@ -138,7 +142,11 @@ func (c *TxPoolIPCClient) readEvents(conn net.Conn) {
 			// Read message data
 			msgData := make([]byte, msgLen)
 			if _, err := io.ReadFull(conn, msgData); err != nil {
-				log.Error("Error reading message data from txpool", "error", err)
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
+					log.Warn("TxPool IPC connection closed by peer while reading message data", "error", err)
+				} else {
+					log.Error("Error reading message data from txpool", "error", err)
+				}
 				return
 			}
 
@@ -235,7 +243,7 @@ func (c *TxPoolIPCClient) SendTxWithPriorityRLP(txRLP []byte, priority *big.Int,
 	// Send length-delimited message (4 bytes big-endian length prefix)
 	msgLen := uint32(len(data))
 	if err := binary.Write(conn, binary.BigEndian, msgLen); err != nil {
-		log.Info("TxPool IPC connection lost, triggering reconnect", "error", err)
+		log.Warn("TxPool IPC write failed (length prefix), triggering reconnect", "error", err)
 		c.connected.Store(false)
 		c.connMu.Lock()
 		c.conn = nil
@@ -245,7 +253,7 @@ func (c *TxPoolIPCClient) SendTxWithPriorityRLP(txRLP []byte, priority *big.Int,
 	}
 
 	if _, err := conn.Write(data); err != nil {
-		log.Info("TxPool IPC connection lost, triggering reconnect", "error", err)
+		log.Warn("TxPool IPC write failed, triggering reconnect", "error", err)
 		c.connected.Store(false)
 		c.connMu.Lock()
 		c.conn = nil
@@ -254,7 +262,7 @@ func (c *TxPoolIPCClient) SendTxWithPriorityRLP(txRLP []byte, priority *big.Int,
 		return fmt.Errorf("failed to send tx to txpool: %w", err)
 	}
 
-	log.Info("Sent transaction with priority to txpool", "tx_rlp_len", len(txRLP), "priority", priority.String())
+	log.Info("Sent transaction with priority to txpool", "tx_rlp_len", len(txRLP), "priority", priority.String(), "encoded_msg_len", len(data))
 	return nil
 }
 
