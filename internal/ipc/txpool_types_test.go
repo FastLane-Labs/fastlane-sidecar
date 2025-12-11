@@ -9,42 +9,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-// TestTransactionRLPRoundtrip tests encoding and decoding a transaction
-func TestTransactionRLPRoundtrip(t *testing.T) {
-	// Create a dummy EIP-1559 transaction
-	tx := types.NewTx(&types.DynamicFeeTx{
-		ChainID:   big.NewInt(1),
-		Nonce:     1,
-		GasTipCap: big.NewInt(1000000000), // 1 gwei
-		GasFeeCap: big.NewInt(2000000000), // 2 gwei
-		Gas:       21000,
-		To:        &common.Address{0x12, 0x34, 0x56},
-		Value:     big.NewInt(1000000000000000000), // 1 ETH
-		Data:      []byte{},
-	})
-
-	// Encode the transaction using MarshalBinary (EIP-2718 format)
-	txBytes, err := tx.MarshalBinary()
-	if err != nil {
-		t.Fatalf("Failed to marshal transaction: %v", err)
-	}
-
-	t.Logf("Encoded transaction: %d bytes, first 32 bytes: %x", len(txBytes), txBytes[:min(32, len(txBytes))])
-
-	// Decode the transaction back
-	decodedTx := new(types.Transaction)
-	if err := decodedTx.UnmarshalBinary(txBytes); err != nil {
-		t.Fatalf("Failed to unmarshal transaction: %v", err)
-	}
-
-	// Verify the transaction matches
-	if decodedTx.Hash() != tx.Hash() {
-		t.Errorf("Transaction hash mismatch: expected %s, got %s", tx.Hash().Hex(), decodedTx.Hash().Hex())
-	}
-
-	t.Logf("✓ Transaction roundtrip successful: hash=%s", tx.Hash().Hex())
-}
-
 // TestEthTxPoolIpcTxMatchesRustEncoding tests that Go encoding matches Rust alloy_rlp exactly
 // This test uses known-good output from Rust's alloy_rlp::encode(EthTxPoolIpcTx)
 func TestEthTxPoolIpcTxMatchesRustEncoding(t *testing.T) {
@@ -128,11 +92,4 @@ func TestEthTxPoolIpcTxMatchesRustEncoding(t *testing.T) {
 	t.Logf("✓ Go encoding matches Rust alloy_rlp exactly!")
 	t.Logf("  Length: %d bytes", len(encoded))
 	t.Logf("  Hex: %x", encoded)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

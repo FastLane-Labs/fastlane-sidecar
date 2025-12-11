@@ -6,12 +6,7 @@ toolchain go1.23.9
 
 require (
 	github.com/ethereum/go-ethereum v1.15.11
-	github.com/gorilla/websocket v1.5.3
-	github.com/gowebpki/jcs v1.0.1
 	github.com/shirou/gopsutil/v3 v3.24.5
-	golang.org/x/crypto v0.38.0
-	golang.org/x/term v0.32.0
-	lukechampine.com/blake3 v1.4.1
 )
 
 require (
@@ -26,7 +21,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
-	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
@@ -36,6 +30,7 @@ require (
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
+	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect

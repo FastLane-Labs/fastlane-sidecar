@@ -68,20 +68,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set image name
-        id: image
-        run: |
-          if [ "${{ matrix.binary }}" = "sidecar" ]; then
-            echo "name=${{ env.IMAGE_NAME_SIDECAR }}" >> $GITHUB_OUTPUT
-          else
-            echo "name=${{ env.IMAGE_NAME_GENERATE_ENVELOPE }}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}
           tags: |
             type=semver,pattern={{version}},enable=${{ steps.version.outputs.is_tag == 'true' }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ steps.version.outputs.is_tag == 'true' }}
