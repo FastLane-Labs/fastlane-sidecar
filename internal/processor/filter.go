@@ -9,7 +9,7 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )
 
 const (
@@ -18,17 +18,13 @@ const (
 )
 
 type Filter struct {
-	blacklistedAddresses map[common.Address]bool
-	minGasPrice          uint64
-	fastlaneContract     common.Address
-	flashBidMethodSig    [4]byte
-	flashBidABI          abi.ABI
+	fastlaneContract  common.Address
+	flashBidMethodSig [4]byte
+	flashBidABI       abi.ABI
 }
 
 func NewFilter(fastlaneContractHex string) (*Filter, error) {
-	f := &Filter{
-		blacklistedAddresses: make(map[common.Address]bool),
-	}
+	f := &Filter{}
 
 	// Validate all required config is provided
 	if fastlaneContractHex == "" {
@@ -71,24 +67,8 @@ func NewFilter(fastlaneContractHex string) (*Filter, error) {
 	return f, nil
 }
 
-// ShouldProcess determines if a transaction should be processed
-func (f *Filter) ShouldProcess(tx *ethTypes.Transaction) bool {
-	// Basic filtering logic
-	if tx.GasPrice().Uint64() < f.minGasPrice {
-		return false
-	}
-
-	if tx.To() != nil {
-		if f.blacklistedAddresses[*tx.To()] {
-			return false
-		}
-	}
-
-	return true
-}
-
 // ClassifyTransaction determines the type of transaction
-func (f *Filter) ClassifyTransaction(tx *ethTypes.Transaction) (types.TransactionType, *types.BidData) {
+func (f *Filter) ClassifyTransaction(tx *ethtypes.Transaction) (types.TransactionType, *types.BidData) {
 	// Check if this is a fastlane contract call
 	if tx.To() != nil && *tx.To() == f.fastlaneContract {
 		if len(tx.Data()) >= 4 {
@@ -160,16 +140,4 @@ func (f *Filter) classifyFlashExecutionBid(data []byte) (types.TransactionType, 
 			"bid_amount", bidAmount.String())
 		return types.NormalTransaction, nil
 	}
-}
-
-func (f *Filter) AddBlacklistedAddress(addr common.Address) {
-	f.blacklistedAddresses[addr] = true
-}
-
-func (f *Filter) SetMinGasPrice(price uint64) {
-	f.minGasPrice = price
-}
-
-func (f *Filter) SetFastlaneContract(addr common.Address) {
-	f.fastlaneContract = addr
 }

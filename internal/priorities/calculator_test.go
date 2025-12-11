@@ -110,9 +110,9 @@ func TestCalculateOpportunityPriority(t *testing.T) {
 
 func TestCalculateBackrunPriority(t *testing.T) {
 	tests := []struct {
-		name       string
-		bidAmount  *big.Int
-		oppTxHash  common.Hash
+		name      string
+		bidAmount *big.Int
+		oppTxHash common.Hash
 	}{
 		{
 			name:      "Backrun with 1 ETH bid",
@@ -192,8 +192,8 @@ func TestPriorityOrdering(t *testing.T) {
 	txHash2 := common.HexToHash("0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd")
 
 	// Create various transactions with different priorities
-	tob1 := CalculateTOBPriority(big.NewInt(1000))  // Higher bid
-	tob2 := CalculateTOBPriority(big.NewInt(500))   // Lower bid
+	tob1 := CalculateTOBPriority(big.NewInt(1000)) // Higher bid
+	tob2 := CalculateTOBPriority(big.NewInt(500))  // Lower bid
 
 	opp1 := CalculateOpportunityPriority(txHash1)
 	backrun1 := CalculateBackrunPriority(big.NewInt(2e18), txHash1) // Higher bid, same hash as opp1

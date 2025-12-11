@@ -169,6 +169,9 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 		s.txReceived.Add(1)
 		s.metrics.TxReceivedFromNode.Add(1)
 
+		// Update heartbeat timestamp
+		s.lastHeartbeat.Store(time.Now().UnixNano())
+
 		// Track message latency (from insertion to sidecar receipt)
 		s.metrics.RecordNodeMessageLatency(time.Since(startTime).Seconds())
 
@@ -261,7 +264,6 @@ func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction, o
 	processingTime := time.Since(startTime).Seconds()
 	s.metrics.RecordTxProcessingLatency(processingTime)
 }
-
 
 // handleTOBBid processes TOB bid - compute priority and stream immediately
 func (s *Sidecar) handleTOBBid(tx *ethTypes.Transaction, bidData *types.BidData) {

@@ -4,8 +4,8 @@ import (
 	"math/big"
 	"sort"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // CalculateTOBPriority calculates priority for a top of block bid
