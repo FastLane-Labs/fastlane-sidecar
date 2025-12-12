@@ -77,19 +77,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	stats := s.statsProvider.GetHealthStats()
 
+	// Use RFC3339Nano for microsecond precision in timestamps
+	const timeFormat = "2006-01-02T15:04:05.000000Z07:00"
+
 	response := map[string]interface{}{
 		"status":      "ok",
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"timestamp":   time.Now().UTC().Format(timeFormat),
 		"tx_received": stats.TxReceived,
 		"tx_streamed": stats.TxStreamed,
 		"pool_size":   stats.PoolSize,
 	}
 
 	if !stats.LastReceivedAt.IsZero() {
-		response["last_received_at"] = stats.LastReceivedAt.Format(time.RFC3339)
+		response["last_received_at"] = stats.LastReceivedAt.UTC().Format(timeFormat)
 	}
 	if !stats.LastSentAt.IsZero() {
-		response["last_sent_at"] = stats.LastSentAt.Format(time.RFC3339)
+		response["last_sent_at"] = stats.LastSentAt.UTC().Format(timeFormat)
 	}
 	if stats.MonadBftVersion != "" {
 		response["monad_bft_version"] = stats.MonadBftVersion
