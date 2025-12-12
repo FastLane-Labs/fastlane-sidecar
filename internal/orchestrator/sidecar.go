@@ -27,11 +27,12 @@ type Sidecar struct {
 	shutdownChan chan struct{}
 
 	// Statistics (kept for backward compatibility, but metrics package is primary source)
-	txReceived    atomic.Uint64
-	bytesTotal    atomic.Uint64
-	txStreamed    atomic.Uint64 // Number of transactions streamed to node with priority
-	lastHeartbeat atomic.Int64  // Unix timestamp in nanoseconds from node
-	poolSize      atomic.Uint64 // Current transaction pool size
+	txReceived     atomic.Uint64
+	bytesTotal     atomic.Uint64
+	txStreamed     atomic.Uint64 // Number of transactions streamed to node with priority
+	poolSize       atomic.Uint64 // Current transaction pool size
+	lastReceivedAt atomic.Int64  // Unix timestamp in nanoseconds of last tx received
+	lastSentAt     atomic.Int64  // Unix timestamp in nanoseconds of last tx sent with priority
 
 	// Components
 	txpoolClient     *ipc.TxPoolIPCClient
@@ -126,17 +127,20 @@ func (s *Sidecar) Stop() {
 
 // GetHealthStatsForServer returns health statistics for the HTTP health server
 func (s *Sidecar) GetHealthStatsForServer() health.Stats {
-	lastHeartbeatNanos := s.lastHeartbeat.Load()
-	var lastHeartbeat time.Time
-	if lastHeartbeatNanos > 0 {
-		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
+	var lastReceivedAt, lastSentAt time.Time
+	if ts := s.lastReceivedAt.Load(); ts > 0 {
+		lastReceivedAt = time.Unix(0, ts)
+	}
+	if ts := s.lastSentAt.Load(); ts > 0 {
+		lastSentAt = time.Unix(0, ts)
 	}
 
 	return health.Stats{
-		LastHeartbeat:   lastHeartbeat,
 		TxReceived:      s.txReceived.Load(),
 		TxStreamed:      s.txStreamed.Load(),
 		PoolSize:        s.poolSize.Load(),
+		LastReceivedAt:  lastReceivedAt,
+		LastSentAt:      lastSentAt,
 		MonadBftVersion: getMonadBftVersion(),
 	}
 }
@@ -168,9 +172,7 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 		log.Info("Received Insert event", "tx_hash", event.TxHash.Hex(), "address", action.Address.Hex(), "owned", action.Owned)
 		s.txReceived.Add(1)
 		s.metrics.TxReceivedFromNode.Add(1)
-
-		// Update heartbeat timestamp
-		s.lastHeartbeat.Store(time.Now().UnixNano())
+		s.lastReceivedAt.Store(time.Now().UnixNano())
 
 		// Track message latency (from insertion to sidecar receipt)
 		s.metrics.RecordNodeMessageLatency(time.Since(startTime).Seconds())
@@ -330,6 +332,7 @@ func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int)
 	}
 	s.txStreamed.Add(1)
 	s.metrics.TxSentToNode.Add(1)
+	s.lastSentAt.Store(time.Now().UnixNano())
 }
 
 // cleanupOldTransactions periodically removes old transactions

@@ -57,9 +57,6 @@ type Metrics struct {
 	NetworkSentBytes   atomic.Uint64
 	GoroutinesCount    atomic.Uint64
 
-	// Heartbeat
-	LastHeartbeatTimestamp atomic.Int64 // Unix timestamp in seconds
-
 	// System metrics collector
 	systemCollector *SystemMetricsCollector
 }
@@ -198,19 +195,10 @@ type Snapshot struct {
 	NetworkRecvMB      float64 `json:"network_recv_mb"`
 	NetworkSentMB      float64 `json:"network_sent_mb"`
 	GoroutinesCount    uint64  `json:"goroutines_count"`
-
-	// Heartbeat
-	LastHeartbeat time.Time `json:"last_heartbeat"`
 }
 
 // GetSnapshot returns a point-in-time snapshot of all metrics
 func (m *Metrics) GetSnapshot() interface{} {
-	lastHB := m.LastHeartbeatTimestamp.Load()
-	var lastHeartbeat time.Time
-	if lastHB > 0 {
-		lastHeartbeat = time.Unix(lastHB, 0)
-	}
-
 	return Snapshot{
 		Timestamp:       time.Now().UTC(),
 		Version:         getSidecarVersion(),
@@ -261,9 +249,6 @@ func (m *Metrics) GetSnapshot() interface{} {
 		NetworkRecvMB:      float64(m.NetworkRecvBytes.Load()) / 1024.0 / 1024.0,
 		NetworkSentMB:      float64(m.NetworkSentBytes.Load()) / 1024.0 / 1024.0,
 		GoroutinesCount:    m.GoroutinesCount.Load(),
-
-		// Heartbeat
-		LastHeartbeat: lastHeartbeat,
 	}
 }
 

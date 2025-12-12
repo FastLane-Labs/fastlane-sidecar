@@ -24,10 +24,11 @@ type MetricsProvider interface {
 
 // Stats contains sidecar health status
 type Stats struct {
-	LastHeartbeat   time.Time `json:"last_heartbeat"`
-	TxReceived      uint64    `json:"tx_received"` // Kept for backward compatibility
-	TxStreamed      uint64    `json:"tx_streamed"` // Kept for backward compatibility
-	PoolSize        uint64    `json:"pool_size"`   // Kept for backward compatibility
+	TxReceived      uint64    `json:"tx_received"`
+	TxStreamed      uint64    `json:"tx_streamed"`
+	PoolSize        uint64    `json:"pool_size"`
+	LastReceivedAt  time.Time `json:"last_received_at"`
+	LastSentAt      time.Time `json:"last_sent_at"`
 	MonadBftVersion string    `json:"monad_bft_version,omitempty"`
 }
 
@@ -76,23 +77,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	stats := s.statsProvider.GetHealthStats()
 
-	// Determine overall health status
-	healthy := true
-	if stats.LastHeartbeat.IsZero() || time.Since(stats.LastHeartbeat) > 60*time.Second {
-		healthy = false // No heartbeat in last 60 seconds
-	}
-
 	response := map[string]interface{}{
-		"status":         "ok",
-		"healthy":        healthy,
-		"last_heartbeat": stats.LastHeartbeat.Format(time.RFC3339),
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		// Include basic stats for backward compatibility
+		"status":      "ok",
+		"timestamp":   time.Now().UTC().Format(time.RFC3339),
 		"tx_received": stats.TxReceived,
 		"tx_streamed": stats.TxStreamed,
 		"pool_size":   stats.PoolSize,
 	}
 
+	if !stats.LastReceivedAt.IsZero() {
+		response["last_received_at"] = stats.LastReceivedAt.Format(time.RFC3339)
+	}
+	if !stats.LastSentAt.IsZero() {
+		response["last_sent_at"] = stats.LastSentAt.Format(time.RFC3339)
+	}
 	if stats.MonadBftVersion != "" {
 		response["monad_bft_version"] = stats.MonadBftVersion
 	}

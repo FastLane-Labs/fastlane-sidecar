@@ -27,14 +27,15 @@ func (m *mockMetricsProvider) GetSnapshot() interface{} {
 }
 
 func TestHealthEndpoint(t *testing.T) {
-	// Create mock stats
+	// Create mock stats with timestamps
 	now := time.Now()
 	mockProvider := &mockStatsProvider{
 		stats: Stats{
-			LastHeartbeat: now,
-			TxReceived:    100,
-			TxStreamed:    50,
-			PoolSize:      25,
+			TxReceived:     100,
+			TxStreamed:     50,
+			PoolSize:       25,
+			LastReceivedAt: now,
+			LastSentAt:     now.Add(-time.Second),
 		},
 	}
 
@@ -84,20 +85,20 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Errorf("Expected timestamp field, got %v", response["timestamp"])
 	}
 
-	// Verify last_heartbeat exists and matches
-	if lastHeartbeat, ok := response["last_heartbeat"].(string); !ok {
-		t.Errorf("Expected last_heartbeat field, got %v", response["last_heartbeat"])
-	} else {
-		parsedTime, err := time.Parse(time.RFC3339, lastHeartbeat)
-		if err != nil {
-			t.Errorf("Failed to parse last_heartbeat: %v", err)
-		}
-		// Check it's close to the expected time (within 1 second)
-		if parsedTime.Sub(now).Abs() > time.Second {
-			t.Errorf("last_heartbeat time mismatch: expected %v, got %v", now, parsedTime)
-		}
+	// Verify status field
+	if status, ok := response["status"].(string); !ok || status != "ok" {
+		t.Errorf("Expected status 'ok', got %v", response["status"])
 	}
 
+	// Verify last_received_at exists
+	if _, ok := response["last_received_at"].(string); !ok {
+		t.Errorf("Expected last_received_at field, got %v", response["last_received_at"])
+	}
+
+	// Verify last_sent_at exists
+	if _, ok := response["last_sent_at"].(string); !ok {
+		t.Errorf("Expected last_sent_at field, got %v", response["last_sent_at"])
+	}
 }
 
 func TestHealthEndpoint_MethodNotAllowed(t *testing.T) {
@@ -122,13 +123,13 @@ func TestHealthEndpoint_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHealthEndpoint_WithZeroValues(t *testing.T) {
-	// Test with zero values and empty timestamp
+	// Test with zero values (no timestamps set)
 	mockProvider := &mockStatsProvider{
 		stats: Stats{
-			LastHeartbeat: time.Time{}, // Zero value
-			TxReceived:    0,
-			TxStreamed:    0,
-			PoolSize:      0,
+			TxReceived: 0,
+			TxStreamed: 0,
+			PoolSize:   0,
+			// LastReceivedAt and LastSentAt are zero time
 		},
 	}
 
@@ -154,5 +155,13 @@ func TestHealthEndpoint_WithZeroValues(t *testing.T) {
 	// Verify zero values are properly returned
 	if txReceived, ok := response["tx_received"].(float64); !ok || txReceived != 0 {
 		t.Errorf("Expected tx_received 0, got %v", response["tx_received"])
+	}
+
+	// Verify timestamps are omitted when zero
+	if _, ok := response["last_received_at"]; ok {
+		t.Errorf("Expected last_received_at to be omitted when zero, got %v", response["last_received_at"])
+	}
+	if _, ok := response["last_sent_at"]; ok {
+		t.Errorf("Expected last_sent_at to be omitted when zero, got %v", response["last_sent_at"])
 	}
 }

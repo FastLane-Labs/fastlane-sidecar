@@ -284,26 +284,24 @@ The sidecar exposes a health endpoint for monitoring its status.
 **Response Format:**
 ```json
 {
-  "last_heartbeat": "2025-10-15T12:34:56Z",
+  "status": "ok",
   "tx_received": 1234,
   "tx_streamed": 567,
   "pool_size": 89,
-  "gateway_connected": true,
-  "gateway_authenticated": true,
-  "gateway_error": "",
+  "last_received_at": "2025-10-15T12:34:55Z",
+  "last_sent_at": "2025-10-15T12:34:56Z",
   "timestamp": "2025-10-15T12:34:56Z"
 }
 ```
 
 **Field Descriptions:**
 
-- `last_heartbeat` - Timestamp of last heartbeat received from the node
+- `status` - Health status ("ok")
 - `tx_received` - Total count of transactions received by the sidecar
 - `tx_streamed` - Number of transactions streamed back to the node with priority
 - `pool_size` - Current number of transactions in the transaction pool
-- `gateway_connected` - Whether the gateway client is connected
-- `gateway_authenticated` - Whether the sidecar is authenticated with the gateway
-- `gateway_error` - Error message if gateway connection failed (omitted if no error)
+- `last_received_at` - Timestamp of last transaction received from node (omitted if none)
+- `last_sent_at` - Timestamp of last prioritized transaction sent to node (omitted if none)
 - `timestamp` - Current time when the health check was performed
 
 **Monitoring Examples:**
@@ -312,18 +310,14 @@ The sidecar exposes a health endpoint for monitoring its status.
 # Check health status
 curl http://localhost:8765/health | jq
 
-# Monitor node connectivity (check if heartbeat is recent)
-curl -s http://localhost:8765/health | jq '.last_heartbeat'
-
-# Check gateway status
-curl -s http://localhost:8765/health | jq '{connected: .gateway_connected, authenticated: .gateway_authenticated, error: .gateway_error}'
-
 # Monitor transaction flow
 curl -s http://localhost:8765/health | jq '{received: .tx_received, streamed: .tx_streamed, pool: .pool_size}'
+
+# Check activity timestamps
+curl -s http://localhost:8765/health | jq '{last_received: .last_received_at, last_sent: .last_sent_at}'
 ```
 
 **Health Indicators:**
 
-- **Node Health:** `last_heartbeat` should be recent (within last few seconds)
-- **Gateway Health:** `gateway_connected=true` and `gateway_authenticated=true` indicates full operation
 - **Transaction Flow:** `tx_received` should increase as transactions arrive; `tx_streamed` shows prioritized transactions sent to node
+- **Activity:** `last_received_at` and `last_sent_at` show recent activity timestamps
