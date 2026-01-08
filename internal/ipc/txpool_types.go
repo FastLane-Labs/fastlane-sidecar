@@ -356,6 +356,14 @@ func decodeEventAction(data []byte) (EventAction, int, error) {
 		case 5: // ExistingHigherPriority
 			reasonStr = "existing higher priority"
 		case 6: // ReplacedByHigherPriority { replacement: TxHash }
+			// Read TxHash length prefix (should be 32)
+			txHashLen := binary.LittleEndian.Uint64(data[offset : offset+8])
+
+			if txHashLen != 32 {
+				return nil, 0, fmt.Errorf("unexpected tx_hash length: %d (%x) (expected 32)", txHashLen, txHashLen)
+			}
+			offset += 8
+
 			if len(data[offset:]) < 32 {
 				return nil, 0, fmt.Errorf("data too short for ReplacedByHigherPriority hash")
 			}
