@@ -117,15 +117,29 @@ func (f *Filter) classifyFlashExecutionBid(data []byte) (types.TransactionType, 
 		return types.NormalTransaction, nil
 	}
 
+	if len(txHashes) == 0 {
+		// Wrong size format
+		log.Warn("flashExecutionBid with no targets not supported",
+			"bid_amount", bidAmount.String())
+		return types.NormalTransaction, nil
+	}
+
+	if txHashes[len(txHashes)-1] != (common.Hash{}) {
+		// Last tx hash must be the zero hash
+		log.Warn("flashExecutionBid with non-zero last tx hash not supported",
+			"bid_amount", bidAmount.String())
+		return types.NormalTransaction, nil
+	}
+
 	// Classify based on txHashes length
 	switch len(txHashes) {
-	case 0:
+	case 1:
 		// TOB bid (no target transactions)
 		return types.TOBBid, &types.BidData{
 			BidAmount: bidAmount,
 		}
 
-	case 1:
+	case 2:
 		// Backrun bid (single target transaction)
 		targetHash := common.BytesToHash(txHashes[0][:])
 		return types.BackrunBid, &types.BidData{
