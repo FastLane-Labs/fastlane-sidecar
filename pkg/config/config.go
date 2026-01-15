@@ -17,8 +17,8 @@ const (
 
 // FastlaneContractAddresses maps network names to their FastLaneAuctionHandler contract addresses
 var FastlaneContractAddresses = map[string]string{
-	"testnet": "0xb3688810bbd755808979BDaB1592bFb69b78A033",
-	"mainnet": "0x0000000000000000000000000000000000000000",
+	"testnet": "0x11f34d16BB4B898c3a489B40cD1024d89A313b88",
+	"mainnet": "0xD32EdF6642D917DbBE7B8BF8e5d6F5df6a9FFF58",
 }
 
 type Config struct {
