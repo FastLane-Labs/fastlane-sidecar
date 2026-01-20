@@ -5,76 +5,106 @@ import (
 	"sort"
 
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // CalculateTOBPriority calculates priority for a top of block bid
-// Priority layout (lexicographic ordering, higher = higher priority):
-// [0]: tier = 3 (TOB - highest)
-// [1-4]: bid amount (higher bid = higher priority)
-// [5-15]: unused (0)
-func CalculateTOBPriority(bidAmount *big.Int) [16]uint64 {
-	var priority [16]uint64
+// Priority layout (U256, 256 bits):
+// Bit 255 (MSB): 1
+// Bits 254-128: 0 (127 bits of padding)
+// Bits 127-0: bid amount (128 bits for bid)
+func CalculateTOBPriority(bidAmount *big.Int) *big.Int {
+	priority := new(big.Int)
 
-	// Set tier to 3 (TOB - highest priority)
-	priority[0] = 3
+	// Set bit 255 to 1 (TOB marker)
+	priority.SetBit(priority, 255, 1)
 
-	// Encode bid amount in positions 1-4
-	encodeBigIntToSlice(&priority, 1, bidAmount)
+	// Mask bid to 128 bits (ensure it doesn't overflow)
+	mask := new(big.Int)
+	mask.SetBit(mask, 128, 1)
+	mask.Sub(mask, big.NewInt(1)) // mask = 2^128 - 1
+
+	maskedBid := new(big.Int).And(bidAmount, mask)
+
+	// OR the bid amount into bits 127-0
+	priority.Or(priority, maskedBid)
 
 	return priority
 }
 
 // CalculateOpportunityPriority calculates priority for an opportunity transaction
-// Priority layout:
-// [0]: tier = 2 (backrun)
-// [1-4]: gas price (higher gas price = higher priority)
-// [5]: tx type = 1 (opportunity - higher than backrun bid)
-// [6-15]: unused (0)
-func CalculateOpportunityPriority(gasTip *big.Int) [16]uint64 {
-	var priority [16]uint64
+// Priority layout (U256, 256 bits):
+// Bit 255: 0 (backrun marker)
+// Bits 254-129: backrun_id (126 bits from txHash)
+// Bit 128: 1 (opportunity marker)
+// Bits 127-0: 0 (padding)
+func CalculateOpportunityPriority(txHash common.Hash) *big.Int {
+	priority := new(big.Int)
 
-	// Set tier to 2 (backrun)
-	priority[0] = 2
+	// Extract first 126 bits of txHash as backrun_id
+	backrunID := extractBackrunID(txHash)
 
-	// Encode gas price in positions 1-4
-	encodeBigIntToSlice(&priority, 1, gasTip)
+	// Shift backrun_id to bits 254-129 (shift left by 129)
+	shiftedID := new(big.Int).Lsh(backrunID, 129)
+	priority.Or(priority, shiftedID)
 
-	// Set tx type to 1 (opportunity - comes before backrun bids)
-	priority[5] = 1
+	// Set bit 128 to 1 (opportunity marker)
+	priority.SetBit(priority, 128, 1)
+
+	// Bits 127-0 are already 0
 
 	return priority
 }
 
 // CalculateBackrunPriority calculates priority for a backrun bid
-// Priority layout:
-// [0]: tier = 2 (backrun)
-// [1-4]: gas price (same as opportunity tx - for grouping)
-// [5]: tx type = 0 (backrun bid - lower than opportunity)
-// [6-9]: bid amount (higher bid = higher priority)
-// [10-15]: unused (0)
-func CalculateBackrunPriority(bidAmount *big.Int, oppGasTip *big.Int) [16]uint64 {
-	var priority [16]uint64
+// Priority layout (U256, 256 bits):
+// Bit 255: 0 (backrun marker)
+// Bits 254-129: backrun_id (126 bits from opportunity txHash)
+// Bit 128: 0 (bid marker)
+// Bits 127-0: bid amount (128 bits)
+func CalculateBackrunPriority(bidAmount *big.Int, oppTxHash common.Hash) *big.Int {
+	priority := new(big.Int)
 
-	// Set tier to 2 (backrun)
-	priority[0] = 2
+	// Extract first 126 bits of opportunity txHash as backrun_id
+	backrunID := extractBackrunID(oppTxHash)
 
-	// Encode opportunity tx gas price in positions 1-4
-	encodeBigIntToSlice(&priority, 1, oppGasTip)
+	// Shift backrun_id to bits 254-129 (shift left by 129)
+	shiftedID := new(big.Int).Lsh(backrunID, 129)
+	priority.Or(priority, shiftedID)
 
-	// Set tx type to 0 (backrun bid - comes after opportunity)
-	priority[5] = 0
+	// Bit 128 is already 0 (bid marker)
 
-	// Encode bid amount in positions 6-9
-	encodeBigIntToSlice(&priority, 6, bidAmount)
+	// Mask bid to 128 bits
+	mask := new(big.Int)
+	mask.SetBit(mask, 128, 1)
+	mask.Sub(mask, big.NewInt(1)) // mask = 2^128 - 1
+
+	maskedBid := new(big.Int).And(bidAmount, mask)
+
+	// OR the bid amount into bits 127-0
+	priority.Or(priority, maskedBid)
 
 	return priority
 }
 
-// SortByPriority sorts transactions by priority (highest first)
-func SortByPriority(txsWithPriorities []types.TxWithPriority) {
-	sort.Slice(txsWithPriorities, func(i, j int) bool {
-		return ComparePriorities(txsWithPriorities[i].Priority, txsWithPriorities[j].Priority) > 0
-	})
+// extractBackrunID extracts the first 126 bits of a transaction hash as backrun_id
+func extractBackrunID(txHash common.Hash) *big.Int {
+	// Get hash bytes
+	hashBytes := txHash.Bytes()
+
+	// Convert to big.Int
+	fullHash := new(big.Int).SetBytes(hashBytes)
+
+	// Shift right by (256 - 126) = 130 bits to get the top 126 bits
+	backrunID := new(big.Int).Rsh(fullHash, 130)
+
+	return backrunID
+}
+
+// ComparePriorities compares two U256 priorities
+// Returns: 1 if a > b, -1 if a < b, 0 if a == b
+func ComparePriorities(a, b *big.Int) int {
+	return a.Cmp(b)
 }
 
 // SortBackrunBidsByPriority sorts backrun bids by bid amount (highest first)
@@ -94,96 +124,41 @@ func SortBackrunBidsByPriority(bids []*types.PooledTransaction, bidData map[stri
 	})
 }
 
-// ComparePriorities compares two priority arrays
-// Returns: 1 if a > b, -1 if a < b, 0 if a == b
-func ComparePriorities(a, b [16]uint64) int {
-	for i := 0; i < 16; i++ {
-		if a[i] > b[i] {
-			return 1
-		} else if a[i] < b[i] {
-			return -1
-		}
-	}
-	return 0
-}
-
-// encodeBigIntToSlice encodes a big.Int into 4 consecutive uint64 slots starting at offset
-// The value is encoded big-endian across the 4 uint64s for proper lexicographic comparison
-// offset specifies where to start writing (e.g., 1 for positions 1-4, 6 for positions 6-9)
-func encodeBigIntToSlice(priority *[16]uint64, offset int, value *big.Int) {
-	if value == nil || offset < 0 || offset+4 > 16 {
-		return
+// FormatPriority returns a human-readable string representation of a U256 priority
+func FormatPriority(priority *big.Int) string {
+	if priority == nil {
+		return "Invalid(nil)"
 	}
 
-	// Convert to bytes (big-endian from big.Int)
-	bytes := value.Bytes()
-
-	// Pad to 32 bytes if needed
-	if len(bytes) < 32 {
-		padded := make([]byte, 32)
-		copy(padded[32-len(bytes):], bytes)
-		bytes = padded
-	}
-
-	// Take only the last 32 bytes if value is larger than uint256
-	if len(bytes) > 32 {
-		bytes = bytes[len(bytes)-32:]
-	}
-
-	// Convert to 4 uint64s in big-endian order for proper lexicographic comparison
-	// bytes[0:8] -> priority[offset], bytes[8:16] -> priority[offset+1], etc.
-	for i := 0; i < 4; i++ {
-		var val uint64
-		for j := 0; j < 8; j++ {
-			val = (val << 8) | uint64(bytes[i*8+j])
-		}
-		priority[offset+i] = val
-	}
-}
-
-// FormatPriority returns a human-readable string representation of a priority
-func FormatPriority(priority [16]uint64) string {
-	tier := priority[0]
-
-	switch tier {
-	case 3:
+	// Check bit 255 to determine if TOB or backrun
+	if priority.Bit(255) == 1 {
 		// TOB transaction
-		bidAmount := decodeBigIntFromSlice(priority, 1)
-		return "TopOfBlock(bid=" + bidAmount.String() + ")"
-	case 2:
+		// Extract bid from bits 127-0
+		mask := new(big.Int)
+		mask.SetBit(mask, 128, 1)
+		mask.Sub(mask, big.NewInt(1)) // mask = 2^128 - 1
+		bid := new(big.Int).And(priority, mask)
+		return "TopOfBlock(bid=" + bid.String() + ")"
+	} else {
 		// Backrun transaction
-		txType := priority[5]
-		gasPrice := decodeBigIntFromSlice(priority, 1)
-		if txType == 1 {
-			// Opportunity tx
-			return "Backrun(opportunity, gasPrice=" + gasPrice.String() + ")"
+		// Check bit 128 to determine if opportunity or bid
+		if priority.Bit(128) == 1 {
+			// Opportunity transaction
+			// Extract backrun_id from bits 254-129
+			backrunID := new(big.Int).Rsh(priority, 129)
+			return "Backrun(opportunity, backrun_id=" + backrunID.String() + ")"
 		} else {
 			// Backrun bid
-			bidAmount := decodeBigIntFromSlice(priority, 6)
-			return "Backrun(bid=" + bidAmount.String() + ", oppGasPrice=" + gasPrice.String() + ")"
-		}
-	case 0:
-		return "Normal"
-	default:
-		return "Unknown(tier=" + string(rune(tier)) + ")"
-	}
-}
+			// Extract backrun_id from bits 254-129
+			backrunID := new(big.Int).Rsh(priority, 129)
 
-// decodeBigIntFromSlice decodes a big.Int from 4 consecutive uint64 slots starting at offset
-func decodeBigIntFromSlice(priority [16]uint64, offset int) *big.Int {
-	if offset < 0 || offset+4 > 16 {
-		return big.NewInt(0)
-	}
+			// Extract bid from bits 127-0
+			mask := new(big.Int)
+			mask.SetBit(mask, 128, 1)
+			mask.Sub(mask, big.NewInt(1)) // mask = 2^128 - 1
+			bid := new(big.Int).And(priority, mask)
 
-	// Extract 4 uint64s and convert to bytes (big-endian)
-	bytes := make([]byte, 32)
-
-	for i := 0; i < 4; i++ {
-		val := priority[offset+i]
-		for j := 0; j < 8; j++ {
-			bytes[i*8+j] = byte(val >> (56 - j*8))
+			return "Backrun(bid=" + bid.String() + ", backrun_id=" + backrunID.String() + ")"
 		}
 	}
-
-	return new(big.Int).SetBytes(bytes)
 }

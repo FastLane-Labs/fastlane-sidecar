@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/health"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/ipc"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/metrics"
-	monadgateway "github.com/FastLane-Labs/fastlane-sidecar/internal/monad-gateway"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/pool"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/priorities"
 	"github.com/FastLane-Labs/fastlane-sidecar/internal/processor"
@@ -27,16 +27,15 @@ type Sidecar struct {
 	shutdownChan chan struct{}
 
 	// Statistics (kept for backward compatibility, but metrics package is primary source)
-	txReceived    atomic.Uint64
-	bytesTotal    atomic.Uint64
-	txStreamed    atomic.Uint64 // Number of transactions streamed to node with priority
-	lastHeartbeat atomic.Int64  // Unix timestamp in nanoseconds from node
-	poolSize      atomic.Uint64 // Current transaction pool size
+	txReceived     atomic.Uint64
+	bytesTotal     atomic.Uint64
+	txStreamed     atomic.Uint64 // Number of transactions streamed to node with priority
+	poolSize       atomic.Uint64 // Current transaction pool size
+	lastReceivedAt atomic.Int64  // Unix timestamp in nanoseconds of last tx received
+	lastSentAt     atomic.Int64  // Unix timestamp in nanoseconds of last tx sent with priority
 
 	// Components
-	nodeListener     *ipc.NodeListener
-	nodeSender       *ipc.NodeSender
-	gatewayClient    *monadgateway.Client
+	txpoolClient     *ipc.TxPoolIPCClient
 	txPool           *pool.TransactionPool
 	filter           *processor.Filter
 	monitoringServer *health.Server
@@ -56,29 +55,18 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		return nil, err
 	}
 
-	// Initialize metrics (must be before gateway client creation)
+	// Initialize metrics
 	m := metrics.InitMetrics()
 
-	// Create gateway client (handles all credential loading and registration)
-	// Returns nil if gateway is disabled or no credentials provided
-	gatewayClient, err := monadgateway.NewMonadGatewayClient(config, m)
-	if err != nil {
-		// Log error but continue without gateway - don't fail sidecar startup
-		log.Error("Failed to create gateway client", "error", err)
-		gatewayClient = nil
-	}
-
 	s := &Sidecar{
-		config:        config,
-		shutdownChan:  shutdownChan,
-		nodeListener:  ipc.NewNodeListener(ctx, config.NodeToSidecarSocketPath),
-		nodeSender:    ipc.NewNodeSender(ctx, config.SidecarToNodeSocketPath),
-		gatewayClient: gatewayClient,
-		txPool:        pool.NewTransactionPool(config.PoolMaxDuration),
-		filter:        filter,
-		metrics:       m,
-		ctx:           ctx,
-		cancel:        cancel,
+		config:       config,
+		shutdownChan: shutdownChan,
+		txpoolClient: ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath),
+		txPool:       pool.NewTransactionPool(config.PoolMaxDuration),
+		filter:       filter,
+		metrics:      m,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	// Create monitoring server with both health and metrics endpoints
@@ -108,31 +96,17 @@ func (s *Sidecar) Start() error {
 		}
 	}()
 
-	// Start node listener
-	if err := s.nodeListener.Start(); err != nil {
-		return err
-	}
+	// TxPool IPC client connects automatically in background
+	// Just wait a moment to allow initial connection
+	time.Sleep(100 * time.Millisecond)
 
-	// Connect to node sender
-	if err := s.nodeSender.Connect(); err != nil {
-		return err
-	}
-
-	// Set node connected metric
-	s.metrics.NodeConnected.Store(1)
-
-	// Start gateway connection if client was created
-	if s.gatewayClient != nil {
-		log.Info("Starting gateway connection")
-		if err := s.gatewayClient.Start(); err != nil {
-			log.Error("Failed to start gateway client", "error", err)
-			// Don't fail startup, gateway will retry in background
-		}
+	// Set node connected metric (will be updated by connection status)
+	if s.txpoolClient.IsConnected() {
+		s.metrics.NodeConnected.Store(1)
 	}
 
 	// Start processing goroutines
-	go s.processNodeTransactions()
-	go s.processGatewayTransactions()
+	go s.processTxPoolEvents()
 	go s.cleanupOldTransactions()
 
 	return nil
@@ -140,14 +114,8 @@ func (s *Sidecar) Start() error {
 
 func (s *Sidecar) Stop() {
 	s.cancel()
-	if s.nodeListener != nil {
-		s.nodeListener.Stop()
-	}
-	if s.nodeSender != nil {
-		s.nodeSender.Close()
-	}
-	if s.gatewayClient != nil {
-		s.gatewayClient.Stop()
+	if s.txpoolClient != nil {
+		s.txpoolClient.Close()
 	}
 	if s.metrics != nil {
 		s.metrics.StopSystemMetricsCollection()
@@ -159,180 +127,102 @@ func (s *Sidecar) Stop() {
 
 // GetHealthStatsForServer returns health statistics for the HTTP health server
 func (s *Sidecar) GetHealthStatsForServer() health.Stats {
-	lastHeartbeatNanos := s.lastHeartbeat.Load()
-	var lastHeartbeat time.Time
-	if lastHeartbeatNanos > 0 {
-		lastHeartbeat = time.Unix(0, lastHeartbeatNanos)
+	var lastReceivedAt, lastSentAt time.Time
+	if ts := s.lastReceivedAt.Load(); ts > 0 {
+		lastReceivedAt = time.Unix(0, ts)
+	}
+	if ts := s.lastSentAt.Load(); ts > 0 {
+		lastSentAt = time.Unix(0, ts)
 	}
 
-	stats := health.Stats{
-		LastHeartbeat:   lastHeartbeat,
+	return health.Stats{
 		TxReceived:      s.txReceived.Load(),
 		TxStreamed:      s.txStreamed.Load(),
 		PoolSize:        s.poolSize.Load(),
+		LastReceivedAt:  lastReceivedAt,
+		LastSentAt:      lastSentAt,
 		MonadBftVersion: getMonadBftVersion(),
 	}
-
-	// Add gateway status and update metrics
-	if s.gatewayClient != nil {
-		gwHealth := s.gatewayClient.Health()
-		stats.GatewayConnected = gwHealth.Connected
-		stats.GatewayAuthenticated = gwHealth.Authenticated
-		if gwHealth.LastError != "" {
-			stats.GatewayError = gwHealth.LastError
-		}
-
-		// Update metrics
-		if gwHealth.Connected {
-			s.metrics.GatewayConnected.Store(1)
-		} else {
-			s.metrics.GatewayConnected.Store(0)
-		}
-		if gwHealth.Authenticated {
-			s.metrics.GatewayAuthenticated.Store(1)
-		} else {
-			s.metrics.GatewayAuthenticated.Store(0)
-		}
-	} else {
-		stats.GatewayConnected = false
-		stats.GatewayAuthenticated = false
-		s.metrics.GatewayConnected.Store(0)
-		s.metrics.GatewayAuthenticated.Store(0)
-		if s.config.DisableGatewayIngress && s.config.DisableGatewayEgress {
-			stats.GatewayError = "gateway disabled (ingress and egress both disabled)"
-		} else {
-			stats.GatewayError = "gateway not initialized"
-		}
-	}
-
-	return stats
 }
 
-// processNodeTransactions handles transactions from the node
-func (s *Sidecar) processNodeTransactions() {
+// processTxPoolEvents handles events from the txpool IPC
+func (s *Sidecar) processTxPoolEvents() {
 	defer close(s.shutdownChan)
 
-	txChan := s.nodeListener.GetTransactionChannel()
+	eventChan := s.txpoolClient.GetEventChannel()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			log.Info("Node transaction processing stopped")
+			log.Info("TxPool event processing stopped")
 			return
-		case msgBytes := <-txChan:
-			s.handleIncomingMessage(msgBytes, "node")
+		case event := <-eventChan:
+			s.handleTxPoolEvent(event)
 		}
 	}
 }
 
-// processGatewayTransactions handles transactions from the gateway
-func (s *Sidecar) processGatewayTransactions() {
-	if s.gatewayClient == nil {
-		log.Info("Gateway client not initialized, not processing gateway transactions")
-		return
-	}
-
-	if s.config.DisableGatewayIngress {
-		log.Info("Gateway ingress disabled, not processing gateway transactions")
-		return
-	}
-
-	gatewayTxChan := s.gatewayClient.GetTransactionChannel()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Info("Gateway transaction processing stopped")
-			return
-		case txBytes := <-gatewayTxChan:
-			// Gateway sends raw RLP transaction bytes, not FastlaneMessage enums
-			s.handleIncomingTransaction(txBytes, "gateway")
-		}
-	}
-}
-
-// handleIncomingMessage handles FastlaneMessage from node
-func (s *Sidecar) handleIncomingMessage(msgBytes []byte, source string) {
-	// Parse the FastlaneMessage enum
-	msgType, data := types.ParseFastlaneMessage(msgBytes)
-
-	switch msgType {
-	case "TxAdded":
-		txAdded, ok := data.(types.TxAdded)
-		if !ok {
-			log.Error("Invalid TxAdded data", "source", source)
-			s.metrics.DecodeErrors.Add(1)
-			return
-		}
-
-		// Calculate latency if timestamp is provided
-		var latencyMs int64
-		if txAdded.TimestampMs > 0 {
-			nowMs := uint64(time.Now().UnixMilli())
-			latencyMs = int64(nowMs - txAdded.TimestampMs)
-			// Track node message latency
-			s.metrics.RecordNodeMessageLatency(float64(latencyMs) / 1000.0)
-		}
-
-		log.Info("Received TxAdded message", "bytes", len(txAdded.TxBytes), "source", source, "latency_ms", latencyMs)
-		s.txReceived.Add(1) // Only count actual transactions, not heartbeats
-
-		// Track by source
-		if source == "node" {
-			s.metrics.TxReceivedFromNode.Add(1)
-		} else if source == "gateway" {
-			s.metrics.TxReceivedFromGateway.Add(1)
-		}
-
-		s.handleIncomingTransaction(txAdded.TxBytes, source)
-
-	case "TxDropped":
-		txDropped, ok := data.(types.TxDropped)
-		if !ok {
-			log.Error("Invalid TxDropped data", "source", source)
-			s.metrics.DecodeErrors.Add(1)
-			return
-		}
-		log.Info("Received TxDropped message", "hash", common.BytesToHash(txDropped.TxHash[:]).Hex(), "source", source)
-		s.metrics.TxDropped.Add(1)
-		s.handleTransactionDropped(txDropped.TxHash[:])
-
-	case "Heartbeat":
-		log.Debug("Received Heartbeat message", "source", source)
-		now := time.Now()
-		s.lastHeartbeat.Store(now.UnixNano())
-		s.metrics.LastHeartbeatTimestamp.Store(now.Unix())
-
-	default:
-		log.Info("Unknown message type, treating as raw tx bytes", "source", source)
-		// Fallback to old behavior for compatibility
-		s.txReceived.Add(1)
-		if source == "node" {
-			s.metrics.TxReceivedFromNode.Add(1)
-		} else if source == "gateway" {
-			s.metrics.TxReceivedFromGateway.Add(1)
-		}
-		s.handleIncomingTransaction(msgBytes, source)
-	}
-}
-
-// handleIncomingTransaction implements the new transaction lifecycle
-func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
+// handleTxPoolEvent handles events from the txpool
+func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 	startTime := time.Now()
 
-	// The txBytes are raw transaction bytes from TxAdded message
+	switch action := event.Action.(type) {
+	case ipc.InsertAction:
+		// New transaction inserted into txpool
+		log.Info("Received Insert event", "tx_hash", event.TxHash.Hex(), "address", action.Address.Hex(), "owned", action.Owned)
+		s.txReceived.Add(1)
+		s.metrics.TxReceivedFromNode.Add(1)
+		s.lastReceivedAt.Store(time.Now().UnixNano())
 
-	// Decode transaction using UnmarshalBinary which handles both:
-	// - Legacy RLP transactions
-	// - EIP-2718 typed transactions (envelope format)
-	var tx ethTypes.Transaction
-	if err := tx.UnmarshalBinary(txBytes); err != nil {
-		log.Error("Failed to decode transaction", "error", err, "source", source)
+		// Track message latency (from insertion to sidecar receipt)
+		s.metrics.RecordNodeMessageLatency(time.Since(startTime).Seconds())
+
+		// Process the transaction with original RLP bytes
+		s.handleIncomingTransactionFromEvent(action.Tx, action.OriginalTxRLP)
+
+	case ipc.CommitAction:
+		// Transaction committed to blockchain - remove from pool if exists
+		log.Debug("Received Commit event", "tx_hash", event.TxHash.Hex())
+		removedTx := s.txPool.RemoveTransaction(event.TxHash)
+		if removedTx != nil {
+			log.Info("Transaction committed and removed from pool", "hash", event.TxHash.Hex())
+		}
+
+	case ipc.DropAction:
+		// Transaction dropped from txpool
+		log.Info("Received Drop event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
+		s.metrics.TxDropped.Add(1)
+		removedTx := s.txPool.RemoveTransaction(event.TxHash)
+		if removedTx != nil {
+			log.Info("Transaction dropped and removed from pool", "hash", event.TxHash.Hex(), "source", removedTx.Source)
+		}
+
+	case ipc.EvictAction:
+		// Transaction evicted from txpool
+		log.Info("Received Evict event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
+		removedTx := s.txPool.RemoveTransaction(event.TxHash)
+		if removedTx != nil {
+			log.Info("Transaction evicted and removed from pool", "hash", event.TxHash.Hex())
+		}
+
+	default:
+		log.Error("Unknown event action type", "tx_hash", event.TxHash.Hex())
+	}
+}
+
+// handleIncomingTransactionFromEvent processes a transaction from txpool event
+func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction, originalRLP []byte) {
+	startTime := time.Now()
+
+	hash := tx.Hash()
+
+	// Get transaction bytes for storage
+	txBytes, err := tx.MarshalBinary()
+	if err != nil {
+		log.Error("Failed to marshal transaction", "error", err, "hash", hash.Hex())
 		s.metrics.DecodeErrors.Add(1)
 		return
 	}
-
-	hash := tx.Hash()
 
 	// Check if transaction already exists in pool
 	if s.txPool.Exists(hash) {
@@ -341,10 +231,10 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	}
 
 	// Check if this is a fastlane bid
-	txType, bidData := s.filter.ClassifyTransaction(&tx)
+	txType, bidData := s.filter.ClassifyTransaction(tx)
 
-	// Add to transaction pool with decoded tx
-	if err := s.txPool.AddTransaction(&tx, txBytes, source); err != nil {
+	// Add to transaction pool with decoded tx and original RLP
+	if err := s.txPool.AddTransactionWithRLP(tx, txBytes, originalRLP, "txpool"); err != nil {
 		log.Error("Failed to add transaction to pool", "error", err)
 		return
 	}
@@ -363,16 +253,13 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	switch txType {
 	case types.TOBBid:
 		s.metrics.TOBBidsProcessed.Add(1)
-		s.handleTOBBid(txBytes, bidData)
+		s.handleTOBBid(tx, bidData)
 	case types.BackrunBid:
 		s.metrics.BackrunBidsProcessed.Add(1)
-		s.handleBackrunBid(txBytes, hash, bidData)
+		s.handleBackrunBid(tx, hash, bidData)
 	case types.NormalTransaction:
 		s.metrics.NormalTxsProcessed.Add(1)
-		// Normal transaction - just keep in pool and forward to gateway if from node
-		if source == "node" {
-			s.forwardToGateway(txBytes)
-		}
+		// Normal transaction - just keep in pool
 	}
 
 	// Track processing latency
@@ -380,33 +267,8 @@ func (s *Sidecar) handleIncomingTransaction(txBytes []byte, source string) {
 	s.metrics.RecordTxProcessingLatency(processingTime)
 }
 
-// handleTransactionDropped handles TxDropped messages
-func (s *Sidecar) handleTransactionDropped(txHashBytes []byte) {
-	if len(txHashBytes) < 32 {
-		log.Error("Invalid transaction hash in TxDropped message")
-		return
-	}
-
-	txHash := common.BytesToHash(txHashBytes[:32])
-
-	// Remove from pool if it exists
-	removedTx := s.txPool.RemoveTransaction(txHash)
-	if removedTx != nil {
-		log.Info("Transaction dropped by node and removed from pool", "hash", txHash.Hex(), "source", removedTx.Source)
-
-		// Notify gateway about the dropped transaction if it didn't come from gateway
-		if s.gatewayClient != nil && removedTx.Source != "gateway" {
-			if err := s.gatewayClient.NotifyTransactionDropped(txHash); err != nil {
-				log.Debug("Failed to notify gateway of dropped transaction", "error", err, "hash", txHash.Hex())
-			}
-		}
-	} else {
-		log.Info("Transaction dropped by node but not found in pool", "hash", txHash.Hex())
-	}
-}
-
 // handleTOBBid processes TOB bid - compute priority and stream immediately
-func (s *Sidecar) handleTOBBid(txBytes []byte, bidData *types.BidData) {
+func (s *Sidecar) handleTOBBid(tx *ethTypes.Transaction, bidData *types.BidData) {
 	if bidData == nil || bidData.BidAmount == nil {
 		log.Error("TOB bid missing bid data")
 		return
@@ -415,18 +277,14 @@ func (s *Sidecar) handleTOBBid(txBytes []byte, bidData *types.BidData) {
 	// Compute priority
 	priority := priorities.CalculateTOBPriority(bidData.BidAmount)
 
-	// Stream immediately to node
-	txWithPriority := types.TxWithPriority{
-		TxBytes:  txBytes,
-		Priority: priority,
-	}
-	s.streamTransaction(txWithPriority)
+	// Stream immediately to txpool
+	s.streamTransaction(tx, priority)
 
 	log.Info("Processed TOB bid", "bid_amount", bidData.BidAmount.String(), "priority", priorities.FormatPriority(priority))
 }
 
 // handleBackrunBid processes backrun bid - look for opportunity and stream both if found
-func (s *Sidecar) handleBackrunBid(txBytes []byte, bidHash common.Hash, bidData *types.BidData) {
+func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash, bidData *types.BidData) {
 	if bidData == nil || bidData.BidAmount == nil || bidData.TargetTxHash == nil {
 		log.Error("Backrun bid missing bid data")
 		return
@@ -441,52 +299,40 @@ func (s *Sidecar) handleBackrunBid(txBytes []byte, bidHash common.Hash, bidData 
 	}
 
 	// Found target transaction - compute priorities and stream both
-	oppGasTip := targetTx.Tx.GasTipCap()
+	// Use target transaction hash as backrun_id for grouping
 
 	// Stream opportunity transaction first
-	oppPriority := priorities.CalculateOpportunityPriority(oppGasTip)
-	oppTxWithPriority := types.TxWithPriority{
-		TxBytes:  targetTx.TxBytes,
-		Priority: oppPriority,
-	}
-	s.streamTransaction(oppTxWithPriority)
+	oppPriority := priorities.CalculateOpportunityPriority(targetTxHash)
+	s.streamTransaction(targetTx.Tx, oppPriority)
 
 	// Stream backrun bid
-	backrunPriority := priorities.CalculateBackrunPriority(bidData.BidAmount, oppGasTip)
-	backrunTxWithPriority := types.TxWithPriority{
-		TxBytes:  txBytes,
-		Priority: backrunPriority,
-	}
-	s.streamTransaction(backrunTxWithPriority)
+	backrunPriority := priorities.CalculateBackrunPriority(bidData.BidAmount, targetTxHash)
+	s.streamTransaction(tx, backrunPriority)
 
 	// Track successful backrun pair match
 	s.metrics.BackrunPairsMatched.Add(1)
 
-	log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String(), "opp_gas_tip", oppGasTip.String())
+	log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String())
 }
 
-// streamTransaction sends a transaction with priority to the node
-func (s *Sidecar) streamTransaction(txWithPriority types.TxWithPriority) {
-	if err := s.nodeSender.SendTxWithPriority(txWithPriority); err != nil {
-		log.Error("Failed to send transaction to node", "error", err)
+// streamTransaction sends a transaction with priority to the txpool
+func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int) {
+	// Look up the original RLP bytes from the pool
+	pooledTx := s.txPool.GetTransaction(tx.Hash())
+	if pooledTx == nil || len(pooledTx.OriginalRLP) == 0 {
+		log.Error("Cannot send transaction: original RLP not found in pool", "hash", tx.Hash().Hex())
+		s.metrics.SendErrors.Add(1)
+		return
+	}
+
+	if err := s.txpoolClient.SendTxWithPriorityRLP(pooledTx.OriginalRLP, priority, []byte{}); err != nil {
+		log.Error("Failed to send transaction to txpool", "error", err)
 		s.metrics.SendErrors.Add(1)
 		return
 	}
 	s.txStreamed.Add(1)
 	s.metrics.TxSentToNode.Add(1)
-}
-
-// forwardToGateway sends transaction to gateway (if it didn't come from there)
-func (s *Sidecar) forwardToGateway(txBytes []byte) {
-	if s.gatewayClient == nil {
-		return // Gateway client not initialized
-	}
-	if err := s.gatewayClient.SendToGateway(txBytes); err != nil {
-		log.Debug("Failed to send transaction to gateway", "error", err)
-		s.metrics.GatewayErrors.Add(1)
-		return
-	}
-	s.metrics.TxSentToGateway.Add(1)
+	s.lastSentAt.Store(time.Now().UnixNano())
 }
 
 // cleanupOldTransactions periodically removes old transactions

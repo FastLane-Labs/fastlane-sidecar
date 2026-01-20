@@ -12,6 +12,8 @@ import (
 
 const testContractAddr = "0xf9436C4b1353D5B411AD5bb65B9826f34737BbC7"
 
+var zeroHash = [32]byte{}
+
 func TestClassifyTOBBid(t *testing.T) {
 	filter, err := NewFilter(testContractAddr)
 	if err != nil {
@@ -24,11 +26,11 @@ func TestClassifyTOBBid(t *testing.T) {
 	// Encode using the ABI
 	method := filter.flashBidABI.Methods["flashExecutionBid"]
 	calldata, err := method.Inputs.Pack(
-		bidAmount,       // bidAmount
-		[][32]byte{},    // txHashes (empty = TOB)
-		big.NewInt(100), // targetBlockNumber
-		false,           // executeOnLoss
-		false,           // payBidOnFail
+		bidAmount,            // bidAmount
+		[][32]byte{zeroHash}, // txHashes (size 1 with zero hash = TOB)
+		big.NewInt(100),      // targetBlockNumber
+		false,                // executeOnLoss
+		false,                // payBidOnFail
 		common.HexToAddress("0x1234567890123456789012345678901234567890"), // searcherToAddress
 		[]byte{}, // searcherCallData
 	)
@@ -83,11 +85,11 @@ func TestClassifyBackrunBid(t *testing.T) {
 	// Encode using the ABI
 	method := filter.flashBidABI.Methods["flashExecutionBid"]
 	calldata, err := method.Inputs.Pack(
-		bidAmount,              // bidAmount
-		[][32]byte{targetHash}, // txHashes (single hash = backrun)
-		big.NewInt(100),        // targetBlockNumber
-		false,                  // executeOnLoss
-		false,                  // payBidOnFail
+		bidAmount,                        // bidAmount
+		[][32]byte{targetHash, zeroHash}, // txHashes (size 2 with zero hash last = backrun)
+		big.NewInt(100),                  // targetBlockNumber
+		false,                            // executeOnLoss
+		false,                            // payBidOnFail
 		common.HexToAddress("0x1234567890123456789012345678901234567890"), // searcherToAddress
 		[]byte{}, // searcherCallData
 	)
@@ -147,11 +149,11 @@ func TestClassifyMultipleTargets(t *testing.T) {
 	// Encode using the ABI
 	method := filter.flashBidABI.Methods["flashExecutionBid"]
 	calldata, err := method.Inputs.Pack(
-		bidAmount,                // bidAmount
-		[][32]byte{hash1, hash2}, // txHashes (multiple = not supported)
-		big.NewInt(100),          // targetBlockNumber
-		false,                    // executeOnLoss
-		false,                    // payBidOnFail
+		bidAmount,                          // bidAmount
+		[][32]byte{hash1, hash2, zeroHash}, // txHashes (multiple = not supported)
+		big.NewInt(100),                    // targetBlockNumber
+		false,                              // executeOnLoss
+		false,                              // payBidOnFail
 		common.HexToAddress("0x1234567890123456789012345678901234567890"), // searcherToAddress
 		[]byte{}, // searcherCallData
 	)

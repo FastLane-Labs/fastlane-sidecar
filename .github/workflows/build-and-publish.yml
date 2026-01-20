@@ -9,7 +9,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME_SIDECAR: fastlane-labs/fastlane-sidecar
-  IMAGE_NAME_GENERATE_ENVELOPE: fastlane-labs/fastlane-generate-envelope
 
 jobs:
   build-and-push-docker:
@@ -17,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        binary: [sidecar, generate-envelope]
+        binary: [sidecar]
 
     permissions:
       contents: read
@@ -69,20 +68,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set image name
-        id: image
-        run: |
-          if [ "${{ matrix.binary }}" = "sidecar" ]; then
-            echo "name=${{ env.IMAGE_NAME_SIDECAR }}" >> $GITHUB_OUTPUT
-          else
-            echo "name=${{ env.IMAGE_NAME_GENERATE_ENVELOPE }}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}
           tags: |
             type=semver,pattern={{version}},enable=${{ steps.version.outputs.is_tag == 'true' }}
             type=semver,pattern={{major}}.{{minor}},enable=${{ steps.version.outputs.is_tag == 'true' }}
@@ -109,7 +99,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        package: [sidecar, generate-envelope]
+        package: [sidecar]
 
     permissions:
       contents: write
@@ -155,16 +145,9 @@ jobs:
           fi
 
           echo "version=${PACKAGE_VERSION}" >> $GITHUB_OUTPUT
-
-          if [ "${{ matrix.package }}" = "sidecar" ]; then
-            echo "📦 Package version: fastlane-sidecar_${PACKAGE_VERSION}_amd64.deb"
-            echo "package_name=fastlane-sidecar" >> $GITHUB_OUTPUT
-            echo "build_dir=build" >> $GITHUB_OUTPUT
-          else
-            echo "📦 Package version: fastlane-generate-envelope_${PACKAGE_VERSION}_amd64.deb"
-            echo "package_name=fastlane-generate-envelope" >> $GITHUB_OUTPUT
-            echo "build_dir=build-generate-envelope" >> $GITHUB_OUTPUT
-          fi
+          echo "📦 Package version: fastlane-sidecar_${PACKAGE_VERSION}_amd64.deb"
+          echo "package_name=fastlane-sidecar" >> $GITHUB_OUTPUT
+          echo "build_dir=build" >> $GITHUB_OUTPUT
 
       - name: Build DEB package
         run: |
@@ -194,17 +177,16 @@ jobs:
             # Install the package
             sudo dpkg -i ${{ steps.version.outputs.package_name }}_${{ steps.version.outputs.version }}_amd64.deb
 
-            ${{ matrix.package == 'sidecar' && '# Start and enable the service
+            # Start and enable the service
             sudo systemctl enable --now fastlane-sidecar
 
             # Check status
-            sudo systemctl status fastlane-sidecar' || '# Run the command
-            fastlane-generate-envelope --help' }}
+            sudo systemctl status fastlane-sidecar
             ```
 
             ### 📋 What's included:
             - Binary: `/usr/bin/${{ steps.version.outputs.package_name }}`
-            ${{ matrix.package == 'sidecar' && '- Systemd service: `fastlane-sidecar.service`' || '' }}
+            - Systemd service: `fastlane-sidecar.service`
 
             🤖 Generated with [Claude Code](https://claude.com/claude-code)
         env:

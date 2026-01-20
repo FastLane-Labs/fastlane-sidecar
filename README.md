@@ -200,19 +200,13 @@ fastlane-sidecar \
 
 ### Configuration Flags
 
-- `-network` - Network name: testnet, testnet-2, mainnet (default: `testnet`)
+- `-network` - Network name: testnet, mainnet (default: `testnet`)
 - `-fastlane-contract` - Override fastlane contract address (optional, uses network default if not set)
 - `-home` - Fastlane home directory (default: `/home/monad/fastlane/`)
-- `-gateway-url` - Override HTTP URL for MEV gateway (optional, uses network default if not set)
 - `-log-level` - Log level: debug, info, warn, error (default: `debug`)
-- `-pool-max-duration-ms` - Max time to hold transactions in pool (default: `60000`)
+- `-pool-max-duration-ms` - Maximum time to hold transactions in pool (default: `2500`)
 - `-auction-cycle-ms` - Auction cycle interval (default: `200`)
-- `-streaming-delay-ms` - Delay before streaming auction results (default: `100`)
-- `-delegation` - Delegation envelope JSON filename relative to home (default: `delegation-envelope.json`)
-- `-keystore` - Sidecar keystore filename relative to home (default: `sidecar-keystore.json`)
-- `-password-file` - Path to file containing keystore password (optional)
-- `-disable-gateway-ingress` - Disable receiving transactions from gateway (default: `false`)
-- `-disable-gateway-egress` - Disable sending transactions to gateway (default: `false`)
+- `-monitoring-port` - HTTP port for monitoring endpoints (/health and /metrics) (default: `8765`)
 
 ### Example systemd Configuration
 
@@ -224,8 +218,7 @@ sudo systemctl edit fastlane-sidecar
 ExecStart=
 ExecStart=/usr/bin/fastlane-sidecar \
   -log-level=info \
-  -network=testnet-2 \
-  -gateway-url=https://gateway.example.com
+  -network=mainnet
 ```
 
 ## Security
@@ -282,53 +275,6 @@ docker run -d \
   -home=/home/monad/fastlane/
 ```
 
-### 2. Delegation Envelope Generator
-
-A utility tool to generate delegation envelopes and sidecar keystores for authentication with the MEV gateway.
-
-**Build:**
-```bash
-# Build the generator binary
-go build -o generate-envelope ./cmd/generate-envelope
-
-# Run the tool
-./generate-envelope --help
-```
-
-**Usage Examples:**
-
-Generate a delegation envelope with a new sidecar keystore:
-```bash
-# Generate unsigned delegation (requires gateway approval)
-./generate-envelope \
-  --network testnet \
-  --home /home/monad/fastlane \
-  --validator-pubkey 0x03abc...def \
-  --sidecar-password "your-secure-password"
-
-# Generate signed delegation with validator keystore
-./generate-envelope \
-  --network testnet \
-  --home /home/monad/fastlane \
-  --validator-keystore /path/to/validator-keystore.json \
-  --sidecar-password "your-secure-password"
-```
-
-**Output Files:**
-- `delegation-envelope.json` - Delegation document for MEV gateway authentication
-- `sidecar-keystore.json` - Encrypted keystore containing the sidecar's private key
-
-**Available Flags:**
-- `--home` - FastLane home directory (default: `/home/monad/fastlane`)
-- `--network` - Network (testnet, testnet-2, mainnet) (default: `testnet`)
-- `--validator-pubkey` - Validator public key (compressed, 33 bytes, 0x-prefixed)
-- `--validator-keystore` - Path to validator keystore file for signed delegations
-- `--validator-password` - Password for validator keystore (will prompt if not provided)
-- `--sidecar-password` - Password for sidecar keystore (required)
-- `--output` - Output delegation envelope file (default: `<home>/delegation-envelope.json`)
-
-**Note:** Use either `--validator-pubkey` (unsigned) OR `--validator-keystore` (signed), not both.
-
 ## Health Endpoint
 
 The sidecar exposes a health endpoint for monitoring its status.
@@ -338,26 +284,24 @@ The sidecar exposes a health endpoint for monitoring its status.
 **Response Format:**
 ```json
 {
-  "last_heartbeat": "2025-10-15T12:34:56Z",
+  "status": "ok",
   "tx_received": 1234,
   "tx_streamed": 567,
   "pool_size": 89,
-  "gateway_connected": true,
-  "gateway_authenticated": true,
-  "gateway_error": "",
+  "last_received_at": "2025-10-15T12:34:55Z",
+  "last_sent_at": "2025-10-15T12:34:56Z",
   "timestamp": "2025-10-15T12:34:56Z"
 }
 ```
 
 **Field Descriptions:**
 
-- `last_heartbeat` - Timestamp of last heartbeat received from the node
+- `status` - Health status ("ok")
 - `tx_received` - Total count of transactions received by the sidecar
 - `tx_streamed` - Number of transactions streamed back to the node with priority
 - `pool_size` - Current number of transactions in the transaction pool
-- `gateway_connected` - Whether the gateway client is connected
-- `gateway_authenticated` - Whether the sidecar is authenticated with the gateway
-- `gateway_error` - Error message if gateway connection failed (omitted if no error)
+- `last_received_at` - Timestamp of last transaction received from node (omitted if none)
+- `last_sent_at` - Timestamp of last prioritized transaction sent to node (omitted if none)
 - `timestamp` - Current time when the health check was performed
 
 **Monitoring Examples:**
@@ -366,18 +310,14 @@ The sidecar exposes a health endpoint for monitoring its status.
 # Check health status
 curl http://localhost:8765/health | jq
 
-# Monitor node connectivity (check if heartbeat is recent)
-curl -s http://localhost:8765/health | jq '.last_heartbeat'
-
-# Check gateway status
-curl -s http://localhost:8765/health | jq '{connected: .gateway_connected, authenticated: .gateway_authenticated, error: .gateway_error}'
-
 # Monitor transaction flow
 curl -s http://localhost:8765/health | jq '{received: .tx_received, streamed: .tx_streamed, pool: .pool_size}'
+
+# Check activity timestamps
+curl -s http://localhost:8765/health | jq '{last_received: .last_received_at, last_sent: .last_sent_at}'
 ```
 
 **Health Indicators:**
 
-- **Node Health:** `last_heartbeat` should be recent (within last few seconds)
-- **Gateway Health:** `gateway_connected=true` and `gateway_authenticated=true` indicates full operation
 - **Transaction Flow:** `tx_received` should increase as transactions arrive; `tx_streamed` shows prioritized transactions sent to node
+- **Activity:** `last_received_at` and `last_sent_at` show recent activity timestamps

@@ -24,14 +24,12 @@ type MetricsProvider interface {
 
 // Stats contains sidecar health status
 type Stats struct {
-	LastHeartbeat        time.Time `json:"last_heartbeat"`
-	TxReceived           uint64    `json:"tx_received"` // Kept for backward compatibility
-	TxStreamed           uint64    `json:"tx_streamed"` // Kept for backward compatibility
-	PoolSize             uint64    `json:"pool_size"`   // Kept for backward compatibility
-	GatewayConnected     bool      `json:"gateway_connected"`
-	GatewayAuthenticated bool      `json:"gateway_authenticated"`
-	GatewayError         string    `json:"gateway_error,omitempty"`
-	MonadBftVersion      string    `json:"monad_bft_version,omitempty"`
+	TxReceived      uint64    `json:"tx_received"`
+	TxStreamed      uint64    `json:"tx_streamed"`
+	PoolSize        uint64    `json:"pool_size"`
+	LastReceivedAt  time.Time `json:"last_received_at"`
+	LastSentAt      time.Time `json:"last_sent_at"`
+	MonadBftVersion string    `json:"monad_bft_version,omitempty"`
 }
 
 // Server provides HTTP monitoring endpoints (health and metrics)
@@ -79,29 +77,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	stats := s.statsProvider.GetHealthStats()
 
-	// Determine overall health status
-	healthy := true
-	if stats.LastHeartbeat.IsZero() || time.Since(stats.LastHeartbeat) > 60*time.Second {
-		healthy = false // No heartbeat in last 60 seconds
-	}
+	// Use RFC3339Nano for microsecond precision in timestamps
+	const timeFormat = "2006-01-02T15:04:05.000000Z07:00"
 
 	response := map[string]interface{}{
-		"status":                "ok",
-		"healthy":               healthy,
-		"last_heartbeat":        stats.LastHeartbeat.Format(time.RFC3339),
-		"gateway_connected":     stats.GatewayConnected,
-		"gateway_authenticated": stats.GatewayAuthenticated,
-		"timestamp":             time.Now().UTC().Format(time.RFC3339),
-		// Include basic stats for backward compatibility
+		"status":      "ok",
+		"timestamp":   time.Now().UTC().Format(timeFormat),
 		"tx_received": stats.TxReceived,
 		"tx_streamed": stats.TxStreamed,
 		"pool_size":   stats.PoolSize,
 	}
 
-	if stats.GatewayError != "" {
-		response["gateway_error"] = stats.GatewayError
+	if !stats.LastReceivedAt.IsZero() {
+		response["last_received_at"] = stats.LastReceivedAt.UTC().Format(timeFormat)
 	}
-
+	if !stats.LastSentAt.IsZero() {
+		response["last_sent_at"] = stats.LastSentAt.UTC().Format(timeFormat)
+	}
 	if stats.MonadBftVersion != "" {
 		response["monad_bft_version"] = stats.MonadBftVersion
 	}

@@ -61,6 +61,36 @@ func (tp *TransactionPool) AddTransaction(tx *ethTypes.Transaction, txBytes []by
 	return nil
 }
 
+// AddTransactionWithRLP adds a transaction to the pool with original RLP bytes
+func (tp *TransactionPool) AddTransactionWithRLP(tx *ethTypes.Transaction, txBytes []byte, originalRLP []byte, source string) error {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+
+	hash := tx.Hash()
+
+	// Check if already exists
+	if _, exists := tp.allTxs[hash]; exists {
+		log.Debug("Transaction already in pool", "hash", hash.Hex())
+		return nil
+	}
+
+	// Create pooled transaction with original RLP
+	pooledTx := &types.PooledTransaction{
+		Tx:          tx,
+		TxBytes:     txBytes,
+		OriginalRLP: originalRLP,
+		ReceivedAt:  time.Now(),
+		Source:      source,
+		TxType:      types.NormalTransaction, // Will be updated by classifier
+		Hash:        hash,
+	}
+
+	tp.allTxs[hash] = pooledTx
+
+	log.Info("Transaction added to pool", "hash", hash.Hex(), "source", source)
+	return nil
+}
+
 // GetTransaction retrieves a transaction by hash
 func (tp *TransactionPool) GetTransaction(hash common.Hash) *types.PooledTransaction {
 	tp.mu.RLock()

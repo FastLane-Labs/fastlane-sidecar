@@ -9,7 +9,7 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )
 
 const (
@@ -18,17 +18,13 @@ const (
 )
 
 type Filter struct {
-	blacklistedAddresses map[common.Address]bool
-	minGasPrice          uint64
-	fastlaneContract     common.Address
-	flashBidMethodSig    [4]byte
-	flashBidABI          abi.ABI
+	fastlaneContract  common.Address
+	flashBidMethodSig [4]byte
+	flashBidABI       abi.ABI
 }
 
 func NewFilter(fastlaneContractHex string) (*Filter, error) {
-	f := &Filter{
-		blacklistedAddresses: make(map[common.Address]bool),
-	}
+	f := &Filter{}
 
 	// Validate all required config is provided
 	if fastlaneContractHex == "" {
@@ -71,24 +67,8 @@ func NewFilter(fastlaneContractHex string) (*Filter, error) {
 	return f, nil
 }
 
-// ShouldProcess determines if a transaction should be processed
-func (f *Filter) ShouldProcess(tx *ethTypes.Transaction) bool {
-	// Basic filtering logic
-	if tx.GasPrice().Uint64() < f.minGasPrice {
-		return false
-	}
-
-	if tx.To() != nil {
-		if f.blacklistedAddresses[*tx.To()] {
-			return false
-		}
-	}
-
-	return true
-}
-
 // ClassifyTransaction determines the type of transaction
-func (f *Filter) ClassifyTransaction(tx *ethTypes.Transaction) (types.TransactionType, *types.BidData) {
+func (f *Filter) ClassifyTransaction(tx *ethtypes.Transaction) (types.TransactionType, *types.BidData) {
 	// Check if this is a fastlane contract call
 	if tx.To() != nil && *tx.To() == f.fastlaneContract {
 		if len(tx.Data()) >= 4 {
@@ -137,15 +117,29 @@ func (f *Filter) classifyFlashExecutionBid(data []byte) (types.TransactionType, 
 		return types.NormalTransaction, nil
 	}
 
+	if len(txHashes) == 0 {
+		// Wrong size format
+		log.Warn("flashExecutionBid with no targets not supported",
+			"bid_amount", bidAmount.String())
+		return types.NormalTransaction, nil
+	}
+
+	if txHashes[len(txHashes)-1] != (common.Hash{}) {
+		// Last tx hash must be the zero hash
+		log.Warn("flashExecutionBid with non-zero last tx hash not supported",
+			"bid_amount", bidAmount.String())
+		return types.NormalTransaction, nil
+	}
+
 	// Classify based on txHashes length
 	switch len(txHashes) {
-	case 0:
+	case 1:
 		// TOB bid (no target transactions)
 		return types.TOBBid, &types.BidData{
 			BidAmount: bidAmount,
 		}
 
-	case 1:
+	case 2:
 		// Backrun bid (single target transaction)
 		targetHash := common.BytesToHash(txHashes[0][:])
 		return types.BackrunBid, &types.BidData{
@@ -160,16 +154,4 @@ func (f *Filter) classifyFlashExecutionBid(data []byte) (types.TransactionType, 
 			"bid_amount", bidAmount.String())
 		return types.NormalTransaction, nil
 	}
-}
-
-func (f *Filter) AddBlacklistedAddress(addr common.Address) {
-	f.blacklistedAddresses[addr] = true
-}
-
-func (f *Filter) SetMinGasPrice(price uint64) {
-	f.minGasPrice = price
-}
-
-func (f *Filter) SetFastlaneContract(addr common.Address) {
-	f.fastlaneContract = addr
 }
