@@ -23,12 +23,12 @@ type HealthStatsProvider interface {
 // SidecarCollector implements prometheus.Collector by reading existing atomic
 // metric fields on every scrape — no duplicate recording logic needed.
 type SidecarCollector struct {
-	m             *Metrics
-	healthStats   HealthStatsProvider
-	descs         []*prometheus.Desc
-	counterDescs  map[string]*prometheus.Desc
-	gaugeDescs    map[string]*prometheus.Desc
-	infoDesc      *prometheus.Desc
+	m            *Metrics
+	healthStats  HealthStatsProvider
+	descs        []*prometheus.Desc
+	counterDescs map[string]*prometheus.Desc
+	gaugeDescs   map[string]*prometheus.Desc
+	infoDesc     *prometheus.Desc
 }
 
 func NewSidecarCollector(m *Metrics, hp HealthStatsProvider) *SidecarCollector {

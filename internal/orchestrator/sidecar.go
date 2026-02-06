@@ -71,14 +71,16 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		cancel:       cancel,
 	}
 
-	// Create monitoring server with health, metrics, and Prometheus endpoints
+	// Create monitoring server with health, metrics, and optionally Prometheus endpoints
 	adapter := &healthStatsAdapter{sidecar: s}
 
-	// Set up Prometheus collector with a custom registry (avoids default Go process metrics)
-	promCollector := metrics.NewSidecarCollector(m, &promHealthAdapter{sidecar: s})
-	promRegistry := prometheus.NewRegistry()
-	promRegistry.MustRegister(promCollector)
-	promHandler := promhttp.HandlerFor(promRegistry, promhttp.HandlerOpts{})
+	var promHandler http.Handler
+	if config.PrometheusEnabled {
+		promCollector := metrics.NewSidecarCollector(m, &promHealthAdapter{sidecar: s})
+		promRegistry := prometheus.NewRegistry()
+		promRegistry.MustRegister(promCollector)
+		promHandler = promhttp.HandlerFor(promRegistry, promhttp.HandlerOpts{})
+	}
 
 	s.monitoringServer = health.NewServer(config.MonitoringPort, adapter, m, promHandler)
 

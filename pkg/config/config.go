@@ -34,7 +34,8 @@ type Config struct {
 	FastlaneContract        string // Hex address of the fastlane auction contract
 
 	// Monitoring configuration
-	MonitoringPort int // HTTP port for monitoring endpoints (/health and /metrics)
+	MonitoringPort    int  // HTTP port for monitoring endpoints (/health and /metrics)
+	PrometheusEnabled bool // Enable Prometheus metrics endpoint at /prometheus/metrics
 }
 
 func NewConfig() *Config {
@@ -81,6 +82,7 @@ func NewConfig() *Config {
 	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional)")
 	fs.IntVar(&conf.MonitoringPort, "monitoring-port", 8765, "HTTP port for monitoring endpoints (/health and /metrics)")
+	fs.BoolVar(&conf.PrometheusEnabled, "prometheus", true, "Enable Prometheus metrics endpoint at /prometheus/metrics")
 
 	fs.Parse(os.Args[1:])
 
