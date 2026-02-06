@@ -39,8 +39,9 @@ type Server struct {
 	httpServer      *http.Server
 }
 
-// NewServer creates a new monitoring server with health and metrics endpoints
-func NewServer(port int, statsProvider StatsProvider, metricsProvider MetricsProvider) *Server {
+// NewServer creates a new monitoring server with health and metrics endpoints.
+// promHandler may be nil if Prometheus metrics are not configured.
+func NewServer(port int, statsProvider StatsProvider, metricsProvider MetricsProvider, promHandler http.Handler) *Server {
 	mux := http.NewServeMux()
 	s := &Server{
 		statsProvider:   statsProvider,
@@ -53,6 +54,9 @@ func NewServer(port int, statsProvider StatsProvider, metricsProvider MetricsPro
 
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/metrics", s.handleMetrics)
+	if promHandler != nil {
+		mux.Handle("/prometheus/metrics", promHandler)
+	}
 	return s
 }
 
