@@ -30,7 +30,6 @@ type Sidecar struct {
 
 	// Statistics (kept for backward compatibility, but metrics package is primary source)
 	txReceived     atomic.Uint64
-	bytesTotal     atomic.Uint64
 	txStreamed     atomic.Uint64 // Number of transactions streamed to node with priority
 	poolSize       atomic.Uint64 // Current transaction pool size
 	lastReceivedAt atomic.Int64  // Unix timestamp in nanoseconds of last tx received

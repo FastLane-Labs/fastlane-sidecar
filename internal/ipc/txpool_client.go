@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -265,19 +264,6 @@ func (c *TxPoolIPCClient) SendTxWithPriorityRLP(txRLP []byte, priority *big.Int,
 
 	log.Info("Sent transaction with priority to txpool", "tx_rlp_len", len(txRLP), "priority", priority.String(), "encoded_msg_len", len(data))
 	return nil
-}
-
-// SendTxWithPriority sends a transaction with priority to the txpool (deprecated - use SendTxWithPriorityRLP)
-// This method converts the transaction to binary format, which may not be compatible with alloy's RLP decoder
-func (c *TxPoolIPCClient) SendTxWithPriority(tx *types.Transaction, priority *big.Int, extraData []byte) error {
-	// Convert transaction to binary (this may not work with alloy's RLP decoder)
-	txBytes, err := tx.MarshalBinary()
-	if err != nil {
-		return fmt.Errorf("failed to marshal transaction: %w", err)
-	}
-
-	// Use the new method with RLP bytes
-	return c.SendTxWithPriorityRLP(txBytes, priority, extraData)
 }
 
 // IsConnected returns true if connected to the txpool
