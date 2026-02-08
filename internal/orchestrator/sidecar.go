@@ -20,6 +20,8 @@ import (
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Sidecar struct {
@@ -69,9 +71,18 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 		cancel:       cancel,
 	}
 
-	// Create monitoring server with both health and metrics endpoints
+	// Create monitoring server with health, metrics, and optionally Prometheus endpoints
 	adapter := &healthStatsAdapter{sidecar: s}
-	s.monitoringServer = health.NewServer(config.MonitoringPort, adapter, m)
+
+	var promHandler http.Handler
+	if config.PrometheusEnabled {
+		promCollector := metrics.NewSidecarCollector(m, &promHealthAdapter{sidecar: s})
+		promRegistry := prometheus.NewRegistry()
+		promRegistry.MustRegister(promCollector)
+		promHandler = promhttp.HandlerFor(promRegistry, promhttp.HandlerOpts{})
+	}
+
+	s.monitoringServer = health.NewServer(config.MonitoringPort, adapter, m, promHandler)
 
 	return s, nil
 }
@@ -83,6 +94,28 @@ type healthStatsAdapter struct {
 
 func (a *healthStatsAdapter) GetHealthStats() health.Stats {
 	return a.sidecar.GetHealthStatsForServer()
+}
+
+// promHealthAdapter adapts Sidecar to metrics.HealthStatsProvider for Prometheus
+type promHealthAdapter struct {
+	sidecar *Sidecar
+}
+
+func (a *promHealthAdapter) GetHealthStatsForPrometheus() metrics.HealthStatsForPrometheus {
+	var lastReceivedAt, lastSentAt float64
+	if ts := a.sidecar.lastReceivedAt.Load(); ts > 0 {
+		lastReceivedAt = float64(ts) / 1e9 // nanoseconds to seconds
+	}
+	if ts := a.sidecar.lastSentAt.Load(); ts > 0 {
+		lastSentAt = float64(ts) / 1e9
+	}
+	return metrics.HealthStatsForPrometheus{
+		TxReceived:     a.sidecar.txReceived.Load(),
+		TxStreamed:     a.sidecar.txStreamed.Load(),
+		PoolSize:       a.sidecar.poolSize.Load(),
+		LastReceivedAt: lastReceivedAt,
+		LastSentAt:     lastSentAt,
+	}
 }
 
 func (s *Sidecar) Start() error {

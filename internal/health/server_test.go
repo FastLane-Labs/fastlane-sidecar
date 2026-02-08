@@ -40,7 +40,7 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 
 	// Create server
-	server := NewServer(0, mockProvider, &mockMetricsProvider{}) // Port 0 for testing
+	server := NewServer(0, mockProvider, &mockMetricsProvider{}, nil) // Port 0 for testing
 
 	// Create test request
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -106,7 +106,7 @@ func TestHealthEndpoint_MethodNotAllowed(t *testing.T) {
 		stats: Stats{},
 	}
 
-	server := NewServer(0, mockProvider, &mockMetricsProvider{})
+	server := NewServer(0, mockProvider, &mockMetricsProvider{}, nil)
 
 	// Test POST method (should be rejected)
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
@@ -133,7 +133,7 @@ func TestHealthEndpoint_WithZeroValues(t *testing.T) {
 		},
 	}
 
-	server := NewServer(0, mockProvider, &mockMetricsProvider{})
+	server := NewServer(0, mockProvider, &mockMetricsProvider{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
