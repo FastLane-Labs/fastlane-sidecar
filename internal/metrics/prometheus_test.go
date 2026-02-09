@@ -25,9 +25,7 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 
 	// Set known counter values
 	m.TxReceivedFromNode.Store(42)
-	m.TxReceivedFromGateway.Store(10)
 	m.TxSentToNode.Store(35)
-	m.TxSentToGateway.Store(5)
 	m.TOBBidsProcessed.Store(8)
 	m.BackrunBidsProcessed.Store(3)
 	m.NormalTxsProcessed.Store(20)
@@ -37,8 +35,6 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 	m.TxExpired.Store(4)
 	m.DecodeErrors.Store(2)
 	m.SendErrors.Store(1)
-	m.GatewayErrors.Store(0)
-	m.GatewayReconnections.Store(3)
 	m.NodeReconnections.Store(1)
 	m.DiskReadBytes.Store(1024)
 	m.DiskWriteBytes.Store(2048)
@@ -48,8 +44,6 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 	// Set known gauge values
 	m.PoolSize.Store(15)
 	m.NodeConnected.Store(1)
-	m.GatewayConnected.Store(1)
-	m.GatewayAuthenticated.Store(0)
 	m.MemoryUsageBytes.Store(104857600) // 100 MB
 	m.SetCPUUsagePercent(23.5)
 	m.SetMemoryUsagePercent(45.2)
@@ -99,9 +93,7 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 
 	// Verify counters with exact values
 	expectMetric(t, output, "sidecar_tx_received_from_node_total", "42")
-	expectMetric(t, output, "sidecar_tx_received_from_gateway_total", "10")
 	expectMetric(t, output, "sidecar_tx_sent_to_node_total", "35")
-	expectMetric(t, output, "sidecar_tx_sent_to_gateway_total", "5")
 	expectMetric(t, output, "sidecar_tob_bids_processed_total", "8")
 	expectMetric(t, output, "sidecar_backrun_bids_processed_total", "3")
 	expectMetric(t, output, "sidecar_normal_txs_processed_total", "20")
@@ -111,11 +103,9 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 	expectMetric(t, output, "sidecar_tx_expired_total", "4")
 	expectMetric(t, output, "sidecar_tx_processing_count_total", "3")
 	expectMetric(t, output, "sidecar_node_message_count_total", "6")
-	expectMetric(t, output, "sidecar_gateway_reconnections_total", "3")
 	expectMetric(t, output, "sidecar_node_reconnections_total", "1")
 	expectMetric(t, output, "sidecar_decode_errors_total", "2")
 	expectMetric(t, output, "sidecar_send_errors_total", "1")
-	expectMetric(t, output, "sidecar_gateway_errors_total", "0")
 	expectMetric(t, output, "sidecar_disk_read_bytes_total", "1024")
 	expectMetric(t, output, "sidecar_disk_write_bytes_total", "2048")
 	expectMetric(t, output, "sidecar_network_recv_bytes_total", "4096")
@@ -124,8 +114,6 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 	// Verify gauges
 	expectMetric(t, output, "sidecar_pool_size", "15")
 	expectMetric(t, output, "sidecar_node_connected", "1")
-	expectMetric(t, output, "sidecar_gateway_connected", "1")
-	expectMetric(t, output, "sidecar_gateway_authenticated", "0")
 	expectMetric(t, output, "sidecar_memory_usage_bytes", "1.048576e+08")
 	expectMetric(t, output, "sidecar_goroutines_count", "50")
 	// avg latency: 300000 micros / 3 / 1e6 = 0.1s

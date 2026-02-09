@@ -97,9 +97,7 @@ dpkg -l | grep fastlane-sidecar
 
 **Step 3: Configure the Service (Optional)**
 
-The service uses the default home directory `/home/monad/fastlane/`, which creates:
-- `/home/monad/fastlane/node_to_sidecar` (node → sidecar)
-- `/home/monad/fastlane/sidecar_to_node` (sidecar → node)
+The service uses the default home directory `/home/monad/fastlane/`.
 
 If your Monad validator uses a different path, configure it:
 
@@ -193,9 +191,8 @@ The sidecar can be configured for different networks and parameters:
 
 ```bash
 fastlane-sidecar \
-  -network=testnet-2 \
-  -log-level=info \
-  -gateway-url=https://gateway.example.com
+  -network=testnet \
+  -log-level=info
 ```
 
 ### Configuration Flags
@@ -205,7 +202,6 @@ fastlane-sidecar \
 - `-home` - Fastlane home directory (default: `/home/monad/fastlane/`)
 - `-log-level` - Log level: debug, info, warn, error (default: `debug`)
 - `-pool-max-duration-ms` - Maximum time to hold transactions in pool (default: `2500`)
-- `-auction-cycle-ms` - Auction cycle interval (default: `200`)
 - `-monitoring-port` - HTTP port for monitoring endpoints (/health and /metrics) (default: `8765`)
 
 ### Example systemd Configuration

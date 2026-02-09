@@ -32,35 +32,6 @@ func (tp *TransactionPool) Exists(hash common.Hash) bool {
 	return exists
 }
 
-// AddTransaction adds a transaction to the pool
-func (tp *TransactionPool) AddTransaction(tx *ethTypes.Transaction, txBytes []byte, source string) error {
-	tp.mu.Lock()
-	defer tp.mu.Unlock()
-
-	hash := tx.Hash()
-
-	// Check if already exists
-	if _, exists := tp.allTxs[hash]; exists {
-		log.Debug("Transaction already in pool", "hash", hash.Hex())
-		return nil
-	}
-
-	// Create pooled transaction
-	pooledTx := &types.PooledTransaction{
-		Tx:         tx,
-		TxBytes:    txBytes,
-		ReceivedAt: time.Now(),
-		Source:     source,
-		TxType:     types.NormalTransaction, // Will be updated by classifier
-		Hash:       hash,
-	}
-
-	tp.allTxs[hash] = pooledTx
-
-	log.Info("Transaction added to pool", "hash", hash.Hex(), "source", source)
-	return nil
-}
-
 // AddTransactionWithRLP adds a transaction to the pool with original RLP bytes
 func (tp *TransactionPool) AddTransactionWithRLP(tx *ethTypes.Transaction, txBytes []byte, originalRLP []byte, source string) error {
 	tp.mu.Lock()
@@ -126,20 +97,6 @@ func (tp *TransactionPool) RemoveTransaction(hash common.Hash) *types.PooledTran
 	return tx
 }
 
-// GetUnclassifiedTransactions returns transactions that haven't been classified
-func (tp *TransactionPool) GetUnclassifiedTransactions() []*types.PooledTransaction {
-	tp.mu.RLock()
-	defer tp.mu.RUnlock()
-
-	var unclassified []*types.PooledTransaction
-	for _, tx := range tp.allTxs {
-		if tx.TxType == types.NormalTransaction {
-			unclassified = append(unclassified, tx)
-		}
-	}
-	return unclassified
-}
-
 // CleanupOldTransactions removes transactions older than maxDuration
 func (tp *TransactionPool) CleanupOldTransactions() {
 	tp.mu.Lock()
@@ -162,14 +119,4 @@ func (tp *TransactionPool) Size() uint64 {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 	return uint64(len(tp.allTxs))
-}
-
-// GetStats returns pool statistics
-func (tp *TransactionPool) GetStats() map[string]int {
-	tp.mu.RLock()
-	defer tp.mu.RUnlock()
-
-	return map[string]int{
-		"total_transactions": len(tp.allTxs),
-	}
 }

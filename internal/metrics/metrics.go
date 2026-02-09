@@ -12,10 +12,8 @@ import (
 // Metrics holds all metrics for the sidecar
 type Metrics struct {
 	// Transaction counters
-	TxReceivedFromNode    atomic.Uint64
-	TxReceivedFromGateway atomic.Uint64
-	TxSentToNode          atomic.Uint64
-	TxSentToGateway       atomic.Uint64
+	TxReceivedFromNode atomic.Uint64
+	TxSentToNode       atomic.Uint64
 
 	// Transaction type counters
 	TOBBidsProcessed     atomic.Uint64
@@ -36,16 +34,12 @@ type Metrics struct {
 	NodeMessageLatencyCount  atomic.Uint64
 
 	// Connection status
-	NodeConnected        atomic.Uint64 // 1=connected, 0=disconnected
-	GatewayConnected     atomic.Uint64
-	GatewayAuthenticated atomic.Uint64
-	GatewayReconnections atomic.Uint64
-	NodeReconnections    atomic.Uint64
+	NodeConnected     atomic.Uint64 // 1=connected, 0=disconnected
+	NodeReconnections atomic.Uint64
 
 	// Error counters
-	DecodeErrors  atomic.Uint64
-	SendErrors    atomic.Uint64
-	GatewayErrors atomic.Uint64
+	DecodeErrors atomic.Uint64
+	SendErrors   atomic.Uint64
 
 	// System metrics (updated periodically)
 	CPUUsagePercent    atomic.Uint64 // stored as uint64 * 100 for precision
@@ -151,10 +145,8 @@ type Snapshot struct {
 	MonadBftVersion string    `json:"monad_bft_version,omitempty"`
 
 	// Transaction metrics
-	TxReceivedFromNode    uint64 `json:"tx_received_from_node"`
-	TxReceivedFromGateway uint64 `json:"tx_received_from_gateway"`
-	TxSentToNode          uint64 `json:"tx_sent_to_node"`
-	TxSentToGateway       uint64 `json:"tx_sent_to_gateway"`
+	TxReceivedFromNode uint64 `json:"tx_received_from_node"`
+	TxSentToNode       uint64 `json:"tx_sent_to_node"`
 
 	// Transaction types
 	TOBBidsProcessed     uint64 `json:"tob_bids_processed"`
@@ -175,16 +167,12 @@ type Snapshot struct {
 	NodeMessageCount       uint64  `json:"node_message_count"`
 
 	// Connection status
-	NodeConnected        bool   `json:"node_connected"`
-	GatewayConnected     bool   `json:"gateway_connected"`
-	GatewayAuthenticated bool   `json:"gateway_authenticated"`
-	GatewayReconnections uint64 `json:"gateway_reconnections"`
-	NodeReconnections    uint64 `json:"node_reconnections"`
+	NodeConnected     bool   `json:"node_connected"`
+	NodeReconnections uint64 `json:"node_reconnections"`
 
 	// Error metrics
-	DecodeErrors  uint64 `json:"decode_errors"`
-	SendErrors    uint64 `json:"send_errors"`
-	GatewayErrors uint64 `json:"gateway_errors"`
+	DecodeErrors uint64 `json:"decode_errors"`
+	SendErrors   uint64 `json:"send_errors"`
 
 	// System metrics
 	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
@@ -205,10 +193,8 @@ func (m *Metrics) GetSnapshot() interface{} {
 		MonadBftVersion: getMonadBftVersion(),
 
 		// Transaction metrics
-		TxReceivedFromNode:    m.TxReceivedFromNode.Load(),
-		TxReceivedFromGateway: m.TxReceivedFromGateway.Load(),
-		TxSentToNode:          m.TxSentToNode.Load(),
-		TxSentToGateway:       m.TxSentToGateway.Load(),
+		TxReceivedFromNode: m.TxReceivedFromNode.Load(),
+		TxSentToNode:       m.TxSentToNode.Load(),
 
 		// Transaction types
 		TOBBidsProcessed:     m.TOBBidsProcessed.Load(),
@@ -229,16 +215,12 @@ func (m *Metrics) GetSnapshot() interface{} {
 		NodeMessageCount:       m.NodeMessageLatencyCount.Load(),
 
 		// Connection status
-		NodeConnected:        m.NodeConnected.Load() == 1,
-		GatewayConnected:     m.GatewayConnected.Load() == 1,
-		GatewayAuthenticated: m.GatewayAuthenticated.Load() == 1,
-		GatewayReconnections: m.GatewayReconnections.Load(),
-		NodeReconnections:    m.NodeReconnections.Load(),
+		NodeConnected:     m.NodeConnected.Load() == 1,
+		NodeReconnections: m.NodeReconnections.Load(),
 
 		// Error metrics
-		DecodeErrors:  m.DecodeErrors.Load(),
-		SendErrors:    m.SendErrors.Load(),
-		GatewayErrors: m.GatewayErrors.Load(),
+		DecodeErrors: m.DecodeErrors.Load(),
+		SendErrors:   m.SendErrors.Load(),
 
 		// System metrics (convert bytes to MB)
 		CPUUsagePercent:    m.GetCPUUsagePercent(),

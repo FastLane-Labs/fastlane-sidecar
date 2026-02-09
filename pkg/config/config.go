@@ -4,15 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 )
 
 const (
-	// Legacy socket suffixes (kept for backward compatibility comments)
-	NodeToSidecarSuffix = "node_to_sidecar"
-	SidecarToNodeSuffix = "sidecar_to_node"
-	TxPoolSocketName    = "mempool.sock" // Txpool IPC socket name
+	TxPoolSocketName = "mempool.sock" // Txpool IPC socket name
 )
 
 // FastlaneContractAddresses maps network names to their FastLaneAuctionHandler contract addresses
@@ -26,12 +22,8 @@ type Config struct {
 	Network          string
 	HomePath         string
 	TxPoolSocketPath string // Txpool IPC socket path (default: /home/monad/monad-bft/mempool.sock)
-	// Legacy fields (kept for backward compatibility but not used)
-	NodeToSidecarSocketPath string
-	SidecarToNodeSocketPath string
-	PoolMaxDuration         time.Duration
-	AuctionCycleTime        time.Duration
-	FastlaneContract        string // Hex address of the fastlane auction contract
+	PoolMaxDuration  time.Duration
+	FastlaneContract string // Hex address of the fastlane auction contract
 
 	// Monitoring configuration
 	MonitoringPort    int  // HTTP port for monitoring endpoints (/health and /metrics)
@@ -41,7 +33,6 @@ type Config struct {
 func NewConfig() *Config {
 	var conf Config
 	var poolMaxDurationMs int
-	var auctionCycleMs int
 	var contractOverride string
 	var txpoolSocketPath string
 
@@ -55,9 +46,6 @@ func NewConfig() *Config {
 		fmt.Fprintf(os.Stderr, "It communicates with the validator via Unix sockets.\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nIPC Socket Paths (derived from -home):\n")
-		fmt.Fprintf(os.Stderr, "  Node → Sidecar: <home>/%s\n", NodeToSidecarSuffix)
-		fmt.Fprintf(os.Stderr, "  Sidecar → Node: <home>/%s\n", SidecarToNodeSuffix)
 		fmt.Fprintf(os.Stderr, "\nHealth Monitoring:\n")
 		fmt.Fprintf(os.Stderr, "  Health endpoint: http://localhost:8765/health\n")
 		fmt.Fprintf(os.Stderr, "  Metrics endpoint: http://localhost:8765/metrics\n")
@@ -79,7 +67,6 @@ func NewConfig() *Config {
 	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
 	fs.StringVar(&txpoolSocketPath, "txpool-socket", "/home/monad/monad-bft/mempool.sock", "Txpool IPC socket path")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 2500, "Maximum time to hold transactions in pool (ms)")
-	fs.IntVar(&auctionCycleMs, "auction-cycle-ms", 200, "Auction cycle interval (ms)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional)")
 	fs.IntVar(&conf.MonitoringPort, "monitoring-port", 8765, "HTTP port for monitoring endpoints (/health and /metrics)")
 	fs.BoolVar(&conf.PrometheusEnabled, "prometheus", true, "Enable Prometheus metrics endpoint at /prometheus/metrics")
@@ -93,14 +80,9 @@ func NewConfig() *Config {
 	}
 
 	conf.PoolMaxDuration = time.Duration(poolMaxDurationMs) * time.Millisecond
-	conf.AuctionCycleTime = time.Duration(auctionCycleMs) * time.Millisecond
 
 	// Set txpool socket path
 	conf.TxPoolSocketPath = txpoolSocketPath
-
-	// Derive legacy socket paths from home directory (kept for backward compatibility)
-	conf.NodeToSidecarSocketPath = filepath.Join(conf.HomePath, NodeToSidecarSuffix)
-	conf.SidecarToNodeSocketPath = filepath.Join(conf.HomePath, SidecarToNodeSuffix)
 
 	// Set fastlane contract address based on network
 	if contractOverride != "" {

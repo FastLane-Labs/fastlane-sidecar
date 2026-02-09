@@ -38,7 +38,7 @@ type PooledTransaction struct {
 	TxBytes     []byte
 	OriginalRLP []byte // Original alloy RLP bytes from txpool (for forwarding back with priority)
 	ReceivedAt  time.Time
-	Source      string // "node" or "gateway"
+	Source      string // "txpool"
 	TxType      TransactionType
 	Hash        common.Hash
 	BidData     *BidData // Bid-specific data if this is a bid transaction
@@ -57,43 +57,4 @@ const (
 type BidData struct {
 	BidAmount    *big.Int     // Bid amount extracted from tx data
 	TargetTxHash *common.Hash // For backrun bids, the target tx hash
-}
-
-// BackrunAuctionPool represents an auction pool for backrun bids
-type BackrunAuctionPool struct {
-	OpportunityTx        *PooledTransaction
-	BackrunBids          []*PooledTransaction
-	CreatedAt            time.Time
-	StreamingScheduledAt time.Time
-	Status               AuctionPoolStatus
-}
-
-// AuctionPoolStatus represents the status of an auction pool
-type AuctionPoolStatus int
-
-const (
-	AuctionPoolCollecting AuctionPoolStatus = iota
-	AuctionPoolReady
-	AuctionPoolStreamed
-)
-
-// TOBScheduledTx represents a TOB bid scheduled for streaming
-type TOBScheduledTx struct {
-	Tx                  *PooledTransaction
-	Priority            [16]uint64
-	ScheduledStreamTime time.Time
-}
-
-// GatewayResponse represents messages received from MEV gateway
-// TODO: Define actual structure based on MEV gateway API
-type GatewayResponse struct {
-	Type    string `json:"type"`
-	Payload any    `json:"payload"`
-}
-
-// TransactionSubmission represents a transaction being sent to MEV gateway
-// TODO: Extend with additional metadata as needed
-type TransactionSubmission struct {
-	Transaction []byte `json:"transaction"`
-	Timestamp   int64  `json:"timestamp"`
 }
