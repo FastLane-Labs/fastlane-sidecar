@@ -139,6 +139,11 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 	// Verify info metric has labels
 	expectMetricPresent(t, output, "sidecar_info{")
 
+	// Verify arrival-after-commit histogram is present (no observations, so count=0)
+	expectContains(t, output, "# TYPE sidecar_tx_arrival_after_commit_ms histogram")
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_count 0")
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_sum 0")
+
 	// Verify HELP and TYPE lines exist for a sample of metrics
 	expectContains(t, output, "# HELP sidecar_tx_received_from_node_total")
 	expectContains(t, output, "# TYPE sidecar_tx_received_from_node_total counter")
@@ -203,6 +208,49 @@ func TestSidecarCollector_ZeroLatency(t *testing.T) {
 
 	expectMetric(t, output, "sidecar_avg_tx_processing_latency_seconds", "0")
 	expectMetric(t, output, "sidecar_avg_node_message_latency_seconds", "0")
+}
+
+func TestSidecarCollector_ArrivalAfterCommitHistogram(t *testing.T) {
+	m := &Metrics{}
+
+	// Record some observations:
+	// 3ms → le5 bucket, 7ms → le10 bucket, 150ms → le200 bucket
+	m.RecordTxArrivalAfterCommit(3)
+	m.RecordTxArrivalAfterCommit(7)
+	m.RecordTxArrivalAfterCommit(150)
+
+	collector := NewSidecarCollector(m, nil)
+
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collector)
+
+	handler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	req := httptest.NewRequest(http.MethodGet, "/prometheus/metrics", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body, _ := io.ReadAll(w.Result().Body)
+	output := string(body)
+
+	// Verify histogram metadata
+	expectContains(t, output, "# TYPE sidecar_tx_arrival_after_commit_ms histogram")
+
+	// Verify cumulative bucket counts:
+	// le5=1, le10=2, le20=2, le50=2, le100=2, le200=3, le500=3, le1000=3
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="5"} 1`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="10"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="20"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="50"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="100"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="200"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="500"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="1000"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="+Inf"} 3`)
+
+	// Verify count and sum
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_count 3")
+	// sum = 3+7+150 = 160
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_sum 160")
 }
 
 // expectMetric checks that a line "metric_name <value>" appears in the output.

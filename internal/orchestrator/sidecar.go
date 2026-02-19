@@ -34,6 +34,7 @@ type Sidecar struct {
 	poolSize       atomic.Uint64 // Current transaction pool size
 	lastReceivedAt atomic.Int64  // Unix timestamp in nanoseconds of last tx received
 	lastSentAt     atomic.Int64  // Unix timestamp in nanoseconds of last tx sent with priority
+	lastCommitTime atomic.Int64  // Unix nanoseconds of last Commit event processed
 
 	// Components
 	txpoolClient     *ipc.TxPoolIPCClient
@@ -200,6 +201,12 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 
 	switch action := event.Action.(type) {
 	case ipc.InsertAction:
+		// Record arrival-after-commit before any processing
+		if lastCommit := s.lastCommitTime.Load(); lastCommit > 0 {
+			deltaMs := float64(time.Now().UnixNano()-lastCommit) / 1e6
+			s.metrics.RecordTxArrivalAfterCommit(deltaMs)
+		}
+
 		// New transaction inserted into txpool
 		log.Info("Received Insert event", "tx_hash", event.TxHash.Hex(), "address", action.Address.Hex(), "owned", action.Owned)
 		s.txReceived.Add(1)
@@ -215,6 +222,7 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 	case ipc.CommitAction:
 		// Transaction committed to blockchain - remove from pool if exists
 		log.Debug("Received Commit event", "tx_hash", event.TxHash.Hex())
+		s.lastCommitTime.Store(time.Now().UnixNano())
 		removedTx := s.txPool.RemoveTransaction(event.TxHash)
 		if removedTx != nil {
 			log.Info("Transaction committed and removed from pool", "hash", event.TxHash.Hex())

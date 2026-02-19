@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync/atomic"
@@ -40,6 +41,11 @@ type Metrics struct {
 	// Error counters
 	DecodeErrors atomic.Uint64
 	SendErrors   atomic.Uint64
+
+	// Distribution of (TX arrival - last commit) in milliseconds
+	TxArrivalAfterCommitBuckets [8]atomic.Uint64 // bucket counts (non-cumulative)
+	TxArrivalAfterCommitSum     atomic.Uint64    // sum of all values in microseconds
+	TxArrivalAfterCommitCount   atomic.Uint64    // total observations
 
 	// System metrics (updated periodically)
 	CPUUsagePercent    atomic.Uint64 // stored as uint64 * 100 for precision
@@ -138,6 +144,40 @@ func (m *Metrics) GetMemoryUsagePercent() float64 {
 	return float64(m.MemoryUsagePercent.Load()) / 100.0
 }
 
+// TxArrivalAfterCommitBoundariesMs defines the upper bounds (in ms) for each histogram bucket.
+// Bucket i counts observations <= BoundariesMs[i]. The last bucket is the overflow (>1000ms).
+var TxArrivalAfterCommitBoundariesMs = [8]float64{5, 10, 20, 50, 100, 200, 500, 1000}
+
+// RecordTxArrivalAfterCommit records how many milliseconds after the last commit a TX arrived.
+func (m *Metrics) RecordTxArrivalAfterCommit(ms float64) {
+	m.TxArrivalAfterCommitSum.Add(uint64(ms * 1000)) // store as microseconds
+	m.TxArrivalAfterCommitCount.Add(1)
+	for i, boundary := range TxArrivalAfterCommitBoundariesMs {
+		if ms <= boundary {
+			m.TxArrivalAfterCommitBuckets[i].Add(1)
+			return
+		}
+	}
+	m.TxArrivalAfterCommitBuckets[len(TxArrivalAfterCommitBoundariesMs)-1].Add(1) // overflow
+}
+
+// GetTxArrivalAfterCommitCumulativeBuckets returns cumulative bucket counts
+// keyed by upper bound, suitable for Prometheus histogram exposition.
+func (m *Metrics) GetTxArrivalAfterCommitCumulativeBuckets() (map[float64]uint64, uint64, float64) {
+	totalCount := m.TxArrivalAfterCommitCount.Load()
+	sumMicros := m.TxArrivalAfterCommitSum.Load()
+	sumMs := float64(sumMicros) / 1000.0
+
+	buckets := make(map[float64]uint64, len(TxArrivalAfterCommitBoundariesMs))
+	var cumulative uint64
+	for i, boundary := range TxArrivalAfterCommitBoundariesMs {
+		cumulative += m.TxArrivalAfterCommitBuckets[i].Load()
+		buckets[boundary] = cumulative
+	}
+
+	return buckets, totalCount, sumMs
+}
+
 // Snapshot represents a point-in-time snapshot of all metrics
 type Snapshot struct {
 	Timestamp       time.Time `json:"timestamp"`
@@ -173,6 +213,11 @@ type Snapshot struct {
 	// Error metrics
 	DecodeErrors uint64 `json:"decode_errors"`
 	SendErrors   uint64 `json:"send_errors"`
+
+	// TX arrival after commit distribution
+	TxArrivalAfterCommitAvgMs   float64           `json:"tx_arrival_after_commit_avg_ms"`
+	TxArrivalAfterCommitCount   uint64            `json:"tx_arrival_after_commit_count"`
+	TxArrivalAfterCommitBuckets map[string]uint64 `json:"tx_arrival_after_commit_buckets"`
 
 	// System metrics
 	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
@@ -222,6 +267,11 @@ func (m *Metrics) GetSnapshot() interface{} {
 		DecodeErrors: m.DecodeErrors.Load(),
 		SendErrors:   m.SendErrors.Load(),
 
+		// TX arrival after commit distribution
+		TxArrivalAfterCommitAvgMs:   m.getAvgTxArrivalAfterCommitMs(),
+		TxArrivalAfterCommitCount:   m.TxArrivalAfterCommitCount.Load(),
+		TxArrivalAfterCommitBuckets: m.getArrivalBucketsSnapshot(),
+
 		// System metrics (convert bytes to MB)
 		CPUUsagePercent:    m.GetCPUUsagePercent(),
 		MemoryUsageMB:      float64(m.MemoryUsageBytes.Load()) / 1024.0 / 1024.0,
@@ -232,6 +282,24 @@ func (m *Metrics) GetSnapshot() interface{} {
 		NetworkSentMB:      float64(m.NetworkSentBytes.Load()) / 1024.0 / 1024.0,
 		GoroutinesCount:    m.GoroutinesCount.Load(),
 	}
+}
+
+func (m *Metrics) getAvgTxArrivalAfterCommitMs() float64 {
+	count := m.TxArrivalAfterCommitCount.Load()
+	if count == 0 {
+		return 0
+	}
+	sumMicros := m.TxArrivalAfterCommitSum.Load()
+	return float64(sumMicros) / float64(count) / 1000.0
+}
+
+func (m *Metrics) getArrivalBucketsSnapshot() map[string]uint64 {
+	buckets := make(map[string]uint64, len(TxArrivalAfterCommitBoundariesMs))
+	for i, boundary := range TxArrivalAfterCommitBoundariesMs {
+		label := fmt.Sprintf("le_%.0fms", boundary)
+		buckets[label] = m.TxArrivalAfterCommitBuckets[i].Load()
+	}
+	return buckets
 }
 
 // getSidecarVersion returns the sidecar version combining hardcoded and dpkg versions
