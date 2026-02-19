@@ -6,8 +6,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/FastLane-Labs/fastlane-sidecar/internal/version"
 )
 
 // Metrics holds all metrics for the sidecar
@@ -302,20 +300,14 @@ func (m *Metrics) getArrivalBucketsSnapshot() map[string]uint64 {
 	return buckets
 }
 
-// getSidecarVersion returns the sidecar version combining hardcoded and dpkg versions
+// getSidecarVersion returns the sidecar version from dpkg
 func getSidecarVersion() string {
-	hardcoded := version.Version
-
-	// Try to get dpkg package version
 	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "fastlane-sidecar")
 	output, err := cmd.Output()
 	if err == nil && len(output) > 0 {
-		dpkgVersion := strings.TrimSpace(string(output))
-		return hardcoded + "-" + dpkgVersion
+		return strings.TrimSpace(string(output))
 	}
-
-	// If dpkg query fails, return hardcoded-unknown
-	return hardcoded + "-unknown"
+	return "unknown"
 }
 
 // getMonadBftVersion attempts to get the monad package version
