@@ -213,8 +213,6 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 			go s.metrics.RecordTxArrivalAfterCommit(deltaMs)
 		}
 
-		// New transaction inserted into txpool
-		log.Info("Received Insert event", "tx_hash", event.TxHash.Hex(), "address", action.Address.Hex(), "owned", action.Owned)
 		s.txReceived.Add(1)
 		s.metrics.TxReceivedFromNode.Add(1)
 		s.lastReceivedAt.Store(time.Now().UnixNano())
@@ -226,33 +224,18 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 		s.handleIncomingTransactionFromEvent(action.Tx, action.OriginalTxRLP)
 
 	case ipc.CommitAction:
-		// Transaction committed to blockchain - remove from pool if exists
-		log.Debug("Received Commit event", "tx_hash", event.TxHash.Hex())
 		s.lastCommitTime.Store(time.Now().UnixNano())
 		s.removePrioritizedTx(event.TxHash)
-		removedTx := s.txPool.RemoveTransaction(event.TxHash)
-		if removedTx != nil {
-			log.Info("Transaction committed and removed from pool", "hash", event.TxHash.Hex())
-		}
+		s.txPool.RemoveTransaction(event.TxHash)
 
 	case ipc.DropAction:
-		// Transaction dropped from txpool
-		log.Info("Received Drop event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
 		s.metrics.TxDropped.Add(1)
 		s.removePrioritizedTx(event.TxHash)
-		removedTx := s.txPool.RemoveTransaction(event.TxHash)
-		if removedTx != nil {
-			log.Info("Transaction dropped and removed from pool", "hash", event.TxHash.Hex(), "source", removedTx.Source)
-		}
+		s.txPool.RemoveTransaction(event.TxHash)
 
 	case ipc.EvictAction:
-		// Transaction evicted from txpool
-		log.Info("Received Evict event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
 		s.removePrioritizedTx(event.TxHash)
-		removedTx := s.txPool.RemoveTransaction(event.TxHash)
-		if removedTx != nil {
-			log.Info("Transaction evicted and removed from pool", "hash", event.TxHash.Hex())
-		}
+		s.txPool.RemoveTransaction(event.TxHash)
 
 	default:
 		log.Error("Unknown event action type", "tx_hash", event.TxHash.Hex())
@@ -342,7 +325,7 @@ func (s *Sidecar) handleTOBBid(tx *ethTypes.Transaction, bidData *types.BidData)
 	// Stream immediately to txpool
 	s.streamTransaction(tx, priority)
 
-	log.Info("Processed TOB bid", "bid_amount", bidData.BidAmount.String(), "priority", priorities.FormatPriority(priority))
+	go log.Info("Processed TOB bid", "bid_amount", bidData.BidAmount.String(), "priority", priorities.FormatPriority(priority))
 }
 
 // handleBackrunBid processes backrun bid - look for opportunity and stream both if found
@@ -356,7 +339,7 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 	targetTx := s.txPool.GetTransaction(targetTxHash)
 
 	if targetTx == nil {
-		log.Info("Target transaction not found for backrun bid", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex())
+		go log.Info("Target transaction not found for backrun bid", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex())
 		return
 	}
 
@@ -374,7 +357,7 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 	// Track successful backrun pair match
 	s.metrics.BackrunPairsMatched.Add(1)
 
-	log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String())
+	go log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String())
 }
 
 // streamTransaction sends a transaction with priority to the txpool

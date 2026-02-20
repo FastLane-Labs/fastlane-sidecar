@@ -166,7 +166,7 @@ func (c *TxPoolIPCClient) readEvents(conn net.Conn) {
 				}
 			}
 
-			log.Debug("Received txpool events", "count", len(events))
+			// Events forwarded to eventChan for sidecar processing
 		}
 	}
 }
@@ -262,7 +262,6 @@ func (c *TxPoolIPCClient) SendTxWithPriorityRLP(txRLP []byte, priority *big.Int,
 		return fmt.Errorf("failed to send tx to txpool: %w", err)
 	}
 
-	log.Info("Sent transaction with priority to txpool", "tx_rlp_len", len(txRLP), "priority", priority.String(), "encoded_msg_len", len(data))
 	return nil
 }
 
