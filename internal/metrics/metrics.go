@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync/atomic"
@@ -38,6 +39,17 @@ type Metrics struct {
 	// Error counters
 	DecodeErrors atomic.Uint64
 	SendErrors   atomic.Uint64
+
+	// Distribution of (TX arrival - last commit) in milliseconds
+	TxArrivalAfterCommitBuckets [15]atomic.Uint64 // bucket counts (non-cumulative)
+	TxArrivalAfterCommitSum     atomic.Uint64     // sum of all values in microseconds
+	TxArrivalAfterCommitCount   atomic.Uint64     // total observations
+
+	// Distribution of priority round-trip latency in milliseconds
+	// Measures: sidecar sends prioritized TX → node inserts it → echo Insert arrives back
+	PriorityRoundTripBuckets [11]atomic.Uint64 // bucket counts (non-cumulative)
+	PriorityRoundTripSum     atomic.Uint64     // sum in microseconds
+	PriorityRoundTripCount   atomic.Uint64     // total observations
 
 	// System metrics (updated periodically)
 	CPUUsagePercent    atomic.Uint64 // stored as uint64 * 100 for precision
@@ -136,6 +148,74 @@ func (m *Metrics) GetMemoryUsagePercent() float64 {
 	return float64(m.MemoryUsagePercent.Load()) / 100.0
 }
 
+// TxArrivalAfterCommitBoundariesMs defines the upper bounds (in ms) for each histogram bucket.
+// Bucket i counts observations <= BoundariesMs[i]. The last bucket is the overflow (>1000ms).
+var TxArrivalAfterCommitBoundariesMs = [15]float64{5, 10, 20, 350, 380, 400, 420, 450, 500, 750, 780, 800, 820, 850, 1000}
+
+// RecordTxArrivalAfterCommit records how many milliseconds after the last commit a TX arrived.
+func (m *Metrics) RecordTxArrivalAfterCommit(ms float64) {
+	m.TxArrivalAfterCommitSum.Add(uint64(ms * 1000)) // store as microseconds
+	m.TxArrivalAfterCommitCount.Add(1)
+	for i, boundary := range TxArrivalAfterCommitBoundariesMs {
+		if ms <= boundary {
+			m.TxArrivalAfterCommitBuckets[i].Add(1)
+			return
+		}
+	}
+	m.TxArrivalAfterCommitBuckets[len(TxArrivalAfterCommitBoundariesMs)-1].Add(1) // overflow
+}
+
+// GetTxArrivalAfterCommitCumulativeBuckets returns cumulative bucket counts
+// keyed by upper bound, suitable for Prometheus histogram exposition.
+func (m *Metrics) GetTxArrivalAfterCommitCumulativeBuckets() (map[float64]uint64, uint64, float64) {
+	totalCount := m.TxArrivalAfterCommitCount.Load()
+	sumMicros := m.TxArrivalAfterCommitSum.Load()
+	sumMs := float64(sumMicros) / 1000.0
+
+	buckets := make(map[float64]uint64, len(TxArrivalAfterCommitBoundariesMs))
+	var cumulative uint64
+	for i, boundary := range TxArrivalAfterCommitBoundariesMs {
+		cumulative += m.TxArrivalAfterCommitBuckets[i].Load()
+		buckets[boundary] = cumulative
+	}
+
+	return buckets, totalCount, sumMs
+}
+
+// PriorityRoundTripBoundariesMs defines bucket upper bounds for the priority round-trip histogram.
+var PriorityRoundTripBoundariesMs = [11]float64{1, 2, 4, 7, 8, 9, 10, 15, 20, 50, 500}
+
+// RecordPriorityRoundTrip records the round-trip latency (ms) from sending a
+// prioritized TX to the node until the echo Insert event arrives back.
+func (m *Metrics) RecordPriorityRoundTrip(ms float64) {
+	m.PriorityRoundTripSum.Add(uint64(ms * 1000)) // store as microseconds
+	m.PriorityRoundTripCount.Add(1)
+	for i, boundary := range PriorityRoundTripBoundariesMs {
+		if ms <= boundary {
+			m.PriorityRoundTripBuckets[i].Add(1)
+			return
+		}
+	}
+	m.PriorityRoundTripBuckets[len(PriorityRoundTripBoundariesMs)-1].Add(1) // overflow
+}
+
+// GetPriorityRoundTripCumulativeBuckets returns cumulative bucket counts
+// keyed by upper bound, suitable for Prometheus histogram exposition.
+func (m *Metrics) GetPriorityRoundTripCumulativeBuckets() (map[float64]uint64, uint64, float64) {
+	totalCount := m.PriorityRoundTripCount.Load()
+	sumMicros := m.PriorityRoundTripSum.Load()
+	sumMs := float64(sumMicros) / 1000.0
+
+	buckets := make(map[float64]uint64, len(PriorityRoundTripBoundariesMs))
+	var cumulative uint64
+	for i, boundary := range PriorityRoundTripBoundariesMs {
+		cumulative += m.PriorityRoundTripBuckets[i].Load()
+		buckets[boundary] = cumulative
+	}
+
+	return buckets, totalCount, sumMs
+}
+
 // Snapshot represents a point-in-time snapshot of all metrics
 type Snapshot struct {
 	Timestamp       time.Time `json:"timestamp"`
@@ -171,6 +251,16 @@ type Snapshot struct {
 	// Error metrics
 	DecodeErrors uint64 `json:"decode_errors"`
 	SendErrors   uint64 `json:"send_errors"`
+
+	// TX arrival after commit distribution
+	TxArrivalAfterCommitAvgMs   float64           `json:"tx_arrival_after_commit_avg_ms"`
+	TxArrivalAfterCommitCount   uint64            `json:"tx_arrival_after_commit_count"`
+	TxArrivalAfterCommitBuckets map[string]uint64 `json:"tx_arrival_after_commit_buckets"`
+
+	// Priority round-trip distribution
+	PriorityRoundTripAvgMs   float64           `json:"priority_round_trip_avg_ms"`
+	PriorityRoundTripCount   uint64            `json:"priority_round_trip_count"`
+	PriorityRoundTripBuckets map[string]uint64 `json:"priority_round_trip_buckets"`
 
 	// System metrics
 	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
@@ -220,6 +310,16 @@ func (m *Metrics) GetSnapshot() interface{} {
 		DecodeErrors: m.DecodeErrors.Load(),
 		SendErrors:   m.SendErrors.Load(),
 
+		// TX arrival after commit distribution
+		TxArrivalAfterCommitAvgMs:   m.getAvgTxArrivalAfterCommitMs(),
+		TxArrivalAfterCommitCount:   m.TxArrivalAfterCommitCount.Load(),
+		TxArrivalAfterCommitBuckets: m.getArrivalBucketsSnapshot(),
+
+		// Priority round-trip distribution
+		PriorityRoundTripAvgMs:   m.getAvgPriorityRoundTripMs(),
+		PriorityRoundTripCount:   m.PriorityRoundTripCount.Load(),
+		PriorityRoundTripBuckets: m.getRoundTripBucketsSnapshot(),
+
 		// System metrics (convert bytes to MB)
 		CPUUsagePercent:    m.GetCPUUsagePercent(),
 		MemoryUsageMB:      float64(m.MemoryUsageBytes.Load()) / 1024.0 / 1024.0,
@@ -230,6 +330,42 @@ func (m *Metrics) GetSnapshot() interface{} {
 		NetworkSentMB:      float64(m.NetworkSentBytes.Load()) / 1024.0 / 1024.0,
 		GoroutinesCount:    m.GoroutinesCount.Load(),
 	}
+}
+
+func (m *Metrics) getAvgTxArrivalAfterCommitMs() float64 {
+	count := m.TxArrivalAfterCommitCount.Load()
+	if count == 0 {
+		return 0
+	}
+	sumMicros := m.TxArrivalAfterCommitSum.Load()
+	return float64(sumMicros) / float64(count) / 1000.0
+}
+
+func (m *Metrics) getArrivalBucketsSnapshot() map[string]uint64 {
+	buckets := make(map[string]uint64, len(TxArrivalAfterCommitBoundariesMs))
+	for i, boundary := range TxArrivalAfterCommitBoundariesMs {
+		label := fmt.Sprintf("le_%.0fms", boundary)
+		buckets[label] = m.TxArrivalAfterCommitBuckets[i].Load()
+	}
+	return buckets
+}
+
+func (m *Metrics) getAvgPriorityRoundTripMs() float64 {
+	count := m.PriorityRoundTripCount.Load()
+	if count == 0 {
+		return 0
+	}
+	sumMicros := m.PriorityRoundTripSum.Load()
+	return float64(sumMicros) / float64(count) / 1000.0
+}
+
+func (m *Metrics) getRoundTripBucketsSnapshot() map[string]uint64 {
+	buckets := make(map[string]uint64, len(PriorityRoundTripBoundariesMs))
+	for i, boundary := range PriorityRoundTripBoundariesMs {
+		label := fmt.Sprintf("le_%.0fms", boundary)
+		buckets[label] = m.PriorityRoundTripBuckets[i].Load()
+	}
+	return buckets
 }
 
 // getSidecarVersion returns the sidecar version from dpkg

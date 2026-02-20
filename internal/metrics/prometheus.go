@@ -23,12 +23,14 @@ type HealthStatsProvider interface {
 // SidecarCollector implements prometheus.Collector by reading existing atomic
 // metric fields on every scrape — no duplicate recording logic needed.
 type SidecarCollector struct {
-	m            *Metrics
-	healthStats  HealthStatsProvider
-	descs        []*prometheus.Desc
-	counterDescs map[string]*prometheus.Desc
-	gaugeDescs   map[string]*prometheus.Desc
-	infoDesc     *prometheus.Desc
+	m                 *Metrics
+	healthStats       HealthStatsProvider
+	descs             []*prometheus.Desc
+	counterDescs      map[string]*prometheus.Desc
+	gaugeDescs        map[string]*prometheus.Desc
+	infoDesc          *prometheus.Desc
+	arrivalHistDesc   *prometheus.Desc
+	roundTripHistDesc *prometheus.Desc
 }
 
 func NewSidecarCollector(m *Metrics, hp HealthStatsProvider) *SidecarCollector {
@@ -102,6 +104,22 @@ func (c *SidecarCollector) initDescs() {
 	c.gauge("sidecar_go_heap_released_bytes", "Go heap released bytes")
 	c.gauge("sidecar_go_gc_runs_total", "Go GC runs")
 	c.gauge("sidecar_go_goroutines", "Go goroutine count")
+
+	// --- Histogram: TX arrival after commit ---
+	c.arrivalHistDesc = prometheus.NewDesc(
+		"sidecar_tx_arrival_after_commit_ms",
+		"Distribution of time between last block commit and TX arrival at sidecar (milliseconds)",
+		nil, nil,
+	)
+	c.descs = append(c.descs, c.arrivalHistDesc)
+
+	// --- Histogram: Priority round-trip latency ---
+	c.roundTripHistDesc = prometheus.NewDesc(
+		"sidecar_priority_round_trip_ms",
+		"Distribution of round-trip latency from sending prioritized TX to receiving echo Insert (milliseconds)",
+		nil, nil,
+	)
+	c.descs = append(c.descs, c.roundTripHistDesc)
 
 	// --- Info metric ---
 	c.infoDesc = prometheus.NewDesc(
@@ -179,6 +197,18 @@ func (c *SidecarCollector) Collect(ch chan<- prometheus.Metric) {
 	emitGauge("sidecar_go_heap_released_bytes", float64(mem.HeapReleased))
 	emitGauge("sidecar_go_gc_runs_total", float64(mem.NumGC))
 	emitGauge("sidecar_go_goroutines", float64(runtime.NumGoroutine()))
+
+	// --- Histogram: TX arrival after commit ---
+	arrivalBuckets, arrivalCount, arrivalSumMs := m.GetTxArrivalAfterCommitCumulativeBuckets()
+	ch <- prometheus.MustNewConstHistogram(
+		c.arrivalHistDesc, arrivalCount, arrivalSumMs, arrivalBuckets,
+	)
+
+	// --- Histogram: Priority round-trip latency ---
+	rtBuckets, rtCount, rtSumMs := m.GetPriorityRoundTripCumulativeBuckets()
+	ch <- prometheus.MustNewConstHistogram(
+		c.roundTripHistDesc, rtCount, rtSumMs, rtBuckets,
+	)
 
 	// --- Info metric ---
 	ch <- prometheus.MustNewConstMetric(

@@ -139,6 +139,16 @@ func TestSidecarCollector_RegistersAndCollects(t *testing.T) {
 	// Verify info metric has labels
 	expectMetricPresent(t, output, "sidecar_info{")
 
+	// Verify arrival-after-commit histogram is present (no observations, so count=0)
+	expectContains(t, output, "# TYPE sidecar_tx_arrival_after_commit_ms histogram")
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_count 0")
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_sum 0")
+
+	// Verify priority round-trip histogram is present (no observations, so count=0)
+	expectContains(t, output, "# TYPE sidecar_priority_round_trip_ms histogram")
+	expectContains(t, output, "sidecar_priority_round_trip_ms_count 0")
+	expectContains(t, output, "sidecar_priority_round_trip_ms_sum 0")
+
 	// Verify HELP and TYPE lines exist for a sample of metrics
 	expectContains(t, output, "# HELP sidecar_tx_received_from_node_total")
 	expectContains(t, output, "# TYPE sidecar_tx_received_from_node_total counter")
@@ -203,6 +213,99 @@ func TestSidecarCollector_ZeroLatency(t *testing.T) {
 
 	expectMetric(t, output, "sidecar_avg_tx_processing_latency_seconds", "0")
 	expectMetric(t, output, "sidecar_avg_node_message_latency_seconds", "0")
+}
+
+func TestSidecarCollector_ArrivalAfterCommitHistogram(t *testing.T) {
+	m := &Metrics{}
+
+	// Record some observations:
+	// 3ms → le5, 7ms → le10, 410ms → le420
+	m.RecordTxArrivalAfterCommit(3)
+	m.RecordTxArrivalAfterCommit(7)
+	m.RecordTxArrivalAfterCommit(410)
+
+	collector := NewSidecarCollector(m, nil)
+
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collector)
+
+	handler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	req := httptest.NewRequest(http.MethodGet, "/prometheus/metrics", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body, _ := io.ReadAll(w.Result().Body)
+	output := string(body)
+
+	// Verify histogram metadata
+	expectContains(t, output, "# TYPE sidecar_tx_arrival_after_commit_ms histogram")
+
+	// Verify cumulative bucket counts:
+	// le5=1, le10=2, le20=2, le350=2, le380=2, le400=2, le420=3, le450..le1000=3
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="5"} 1`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="10"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="20"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="350"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="380"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="400"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="420"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="450"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="500"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="750"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="780"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="800"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="820"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="850"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="1000"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="+Inf"} 3`)
+
+	// Verify count and sum
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_count 3")
+	// sum = 3+7+410 = 420
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_sum 420")
+}
+
+func TestSidecarCollector_PriorityRoundTripHistogram(t *testing.T) {
+	m := &Metrics{}
+
+	// Record observations: 3ms → le4, 9ms → le9, 18ms → le20
+	m.RecordPriorityRoundTrip(3)
+	m.RecordPriorityRoundTrip(9)
+	m.RecordPriorityRoundTrip(18)
+
+	collector := NewSidecarCollector(m, nil)
+
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collector)
+
+	handler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+	req := httptest.NewRequest(http.MethodGet, "/prometheus/metrics", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body, _ := io.ReadAll(w.Result().Body)
+	output := string(body)
+
+	// Verify histogram metadata
+	expectContains(t, output, "# TYPE sidecar_priority_round_trip_ms histogram")
+
+	// Cumulative: le1=0, le2=0, le4=1, le7=1, le8=1, le9=2, le10=2, le15=2, le20=3, le50=3, le500=3
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="1"} 0`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="2"} 0`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="4"} 1`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="7"} 1`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="8"} 1`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="9"} 2`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="10"} 2`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="15"} 2`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="20"} 3`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="50"} 3`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="500"} 3`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="+Inf"} 3`)
+
+	// count=3, sum=3+9+18=30
+	expectContains(t, output, "sidecar_priority_round_trip_ms_count 3")
+	expectContains(t, output, "sidecar_priority_round_trip_ms_sum 30")
 }
 
 // expectMetric checks that a line "metric_name <value>" appears in the output.

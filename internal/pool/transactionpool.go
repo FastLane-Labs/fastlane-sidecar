@@ -39,9 +39,7 @@ func (tp *TransactionPool) AddTransactionWithRLP(tx *ethTypes.Transaction, txByt
 
 	hash := tx.Hash()
 
-	// Check if already exists
 	if _, exists := tp.allTxs[hash]; exists {
-		log.Debug("Transaction already in pool", "hash", hash.Hex())
 		return nil
 	}
 
@@ -57,8 +55,6 @@ func (tp *TransactionPool) AddTransactionWithRLP(tx *ethTypes.Transaction, txByt
 	}
 
 	tp.allTxs[hash] = pooledTx
-
-	log.Info("Transaction added to pool", "hash", hash.Hex(), "source", source)
 	return nil
 }
 
@@ -90,10 +86,7 @@ func (tp *TransactionPool) RemoveTransaction(hash common.Hash) *types.PooledTran
 		return nil
 	}
 
-	// Remove from main pool
 	delete(tp.allTxs, hash)
-
-	log.Info("Removed transaction from pool", "hash", hash.Hex())
 	return tx
 }
 
