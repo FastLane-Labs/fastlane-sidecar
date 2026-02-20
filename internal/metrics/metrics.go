@@ -42,8 +42,8 @@ type Metrics struct {
 
 	// Distribution of (TX arrival - last commit) in milliseconds
 	TxArrivalAfterCommitBuckets [15]atomic.Uint64 // bucket counts (non-cumulative)
-	TxArrivalAfterCommitSum     atomic.Uint64    // sum of all values in microseconds
-	TxArrivalAfterCommitCount   atomic.Uint64    // total observations
+	TxArrivalAfterCommitSum     atomic.Uint64     // sum of all values in microseconds
+	TxArrivalAfterCommitCount   atomic.Uint64     // total observations
 
 	// Distribution of priority round-trip latency in milliseconds
 	// Measures: sidecar sends prioritized TX → node inserts it → echo Insert arrives back
