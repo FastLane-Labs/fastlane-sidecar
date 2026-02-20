@@ -131,21 +131,21 @@ func TestRecordTxArrivalAfterCommit_BoundaryValues(t *testing.T) {
 func TestRecordPriorityRoundTrip_BucketPlacement(t *testing.T) {
 	m := &Metrics{}
 
-	// Boundaries: 1, 2, 4, 7, 8, 9, 10, 15, 20, 50
+	// Boundaries: 1, 2, 4, 7, 8, 9, 10, 15, 20, 50, 500
 	m.RecordPriorityRoundTrip(0.5) // bucket 0 (le 1ms)
 	m.RecordPriorityRoundTrip(1)   // bucket 0 (le 1ms, boundary inclusive)
 	m.RecordPriorityRoundTrip(3)   // bucket 2 (le 4ms)
 	m.RecordPriorityRoundTrip(8.5) // bucket 5 (le 9ms)
 	m.RecordPriorityRoundTrip(12)  // bucket 7 (le 15ms)
-	m.RecordPriorityRoundTrip(25)  // bucket 8 (le 20... wait no, 25 > 20, so le 50)
-	m.RecordPriorityRoundTrip(200) // bucket 9 (overflow, >50ms)
+	m.RecordPriorityRoundTrip(25)  // bucket 9 (le 50ms)
+	m.RecordPriorityRoundTrip(200) // bucket 10 (le 500ms)
 
 	if m.PriorityRoundTripCount.Load() != 7 {
 		t.Errorf("expected count=7, got %d", m.PriorityRoundTripCount.Load())
 	}
 
-	// Non-cumulative buckets: [1]=2, [2]=1, [5]=1, [7]=1, [9]=2 (25→le50, 200→overflow→le50)
-	expected := [10]uint64{2, 0, 1, 0, 0, 1, 0, 1, 0, 2}
+	// Non-cumulative buckets
+	expected := [11]uint64{2, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1}
 	for i, want := range expected {
 		got := m.PriorityRoundTripBuckets[i].Load()
 		if got != want {
@@ -180,9 +180,9 @@ func TestGetPriorityRoundTripCumulativeBuckets(t *testing.T) {
 		t.Errorf("expected sumMs=%.1f, got %.1f", expectedSum, sumMs)
 	}
 
-	// Cumulative: le1=0, le2=0, le4=1, le7=2, le8=2, le9=2, le10=2, le15=3, le20=3, le50=3
+	// Cumulative: le1=0, le2=0, le4=1, le7=2, le8=2, le9=2, le10=2, le15=3, le20=3, le50=3, le500=3
 	expectedCumulative := map[float64]uint64{
-		1: 0, 2: 0, 4: 1, 7: 2, 8: 2, 9: 2, 10: 2, 15: 3, 20: 3, 50: 3,
+		1: 0, 2: 0, 4: 1, 7: 2, 8: 2, 9: 2, 10: 2, 15: 3, 20: 3, 50: 3, 500: 3,
 	}
 	for boundary, want := range expectedCumulative {
 		got := buckets[boundary]

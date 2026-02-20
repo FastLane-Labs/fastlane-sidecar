@@ -47,7 +47,7 @@ type Metrics struct {
 
 	// Distribution of priority round-trip latency in milliseconds
 	// Measures: sidecar sends prioritized TX → node inserts it → echo Insert arrives back
-	PriorityRoundTripBuckets [10]atomic.Uint64 // bucket counts (non-cumulative)
+	PriorityRoundTripBuckets [11]atomic.Uint64 // bucket counts (non-cumulative)
 	PriorityRoundTripSum     atomic.Uint64     // sum in microseconds
 	PriorityRoundTripCount   atomic.Uint64     // total observations
 
@@ -183,7 +183,7 @@ func (m *Metrics) GetTxArrivalAfterCommitCumulativeBuckets() (map[float64]uint64
 }
 
 // PriorityRoundTripBoundariesMs defines bucket upper bounds for the priority round-trip histogram.
-var PriorityRoundTripBoundariesMs = [10]float64{1, 2, 4, 7, 8, 9, 10, 15, 20, 50}
+var PriorityRoundTripBoundariesMs = [11]float64{1, 2, 4, 7, 8, 9, 10, 15, 20, 50, 500}
 
 // RecordPriorityRoundTrip records the round-trip latency (ms) from sending a
 // prioritized TX to the node until the echo Insert event arrives back.

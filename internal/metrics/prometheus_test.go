@@ -289,7 +289,7 @@ func TestSidecarCollector_PriorityRoundTripHistogram(t *testing.T) {
 	// Verify histogram metadata
 	expectContains(t, output, "# TYPE sidecar_priority_round_trip_ms histogram")
 
-	// Cumulative: le1=0, le2=0, le4=1, le7=1, le8=1, le9=2, le10=2, le15=2, le20=3, le50=3
+	// Cumulative: le1=0, le2=0, le4=1, le7=1, le8=1, le9=2, le10=2, le15=2, le20=3, le50=3, le500=3
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="1"} 0`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="2"} 0`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="4"} 1`)
@@ -300,6 +300,7 @@ func TestSidecarCollector_PriorityRoundTripHistogram(t *testing.T) {
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="15"} 2`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="20"} 3`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="50"} 3`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="500"} 3`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="+Inf"} 3`)
 
 	// count=3, sum=3+9+18=30
