@@ -219,10 +219,10 @@ func TestSidecarCollector_ArrivalAfterCommitHistogram(t *testing.T) {
 	m := &Metrics{}
 
 	// Record some observations:
-	// 3ms → le5 bucket, 7ms → le10 bucket, 150ms → le200 bucket
+	// 3ms → le5, 7ms → le10, 410ms → le420
 	m.RecordTxArrivalAfterCommit(3)
 	m.RecordTxArrivalAfterCommit(7)
-	m.RecordTxArrivalAfterCommit(150)
+	m.RecordTxArrivalAfterCommit(410)
 
 	collector := NewSidecarCollector(m, nil)
 
@@ -241,27 +241,34 @@ func TestSidecarCollector_ArrivalAfterCommitHistogram(t *testing.T) {
 	expectContains(t, output, "# TYPE sidecar_tx_arrival_after_commit_ms histogram")
 
 	// Verify cumulative bucket counts:
-	// le5=1, le10=2, le20=2, le50=2, le100=2, le200=3, le500=3, le1000=3
+	// le5=1, le10=2, le20=2, le350=2, le380=2, le400=2, le420=3, le450..le1000=3
 	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="5"} 1`)
 	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="10"} 2`)
 	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="20"} 2`)
-	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="50"} 2`)
-	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="100"} 2`)
-	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="200"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="350"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="380"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="400"} 2`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="420"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="450"} 3`)
 	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="500"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="750"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="780"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="800"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="820"} 3`)
+	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="850"} 3`)
 	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="1000"} 3`)
 	expectContains(t, output, `sidecar_tx_arrival_after_commit_ms_bucket{le="+Inf"} 3`)
 
 	// Verify count and sum
 	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_count 3")
-	// sum = 3+7+150 = 160
-	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_sum 160")
+	// sum = 3+7+410 = 420
+	expectContains(t, output, "sidecar_tx_arrival_after_commit_ms_sum 420")
 }
 
 func TestSidecarCollector_PriorityRoundTripHistogram(t *testing.T) {
 	m := &Metrics{}
 
-	// Record observations: 3ms → le4, 9ms → le10, 18ms → le20
+	// Record observations: 3ms → le4, 9ms → le9, 18ms → le20
 	m.RecordPriorityRoundTrip(3)
 	m.RecordPriorityRoundTrip(9)
 	m.RecordPriorityRoundTrip(18)
@@ -282,17 +289,17 @@ func TestSidecarCollector_PriorityRoundTripHistogram(t *testing.T) {
 	// Verify histogram metadata
 	expectContains(t, output, "# TYPE sidecar_priority_round_trip_ms histogram")
 
-	// Cumulative: le2=0, le4=1, le6=1, le8=1, le10=2, le15=2, le20=3, le30=3, le50=3, le100=3
+	// Cumulative: le1=0, le2=0, le4=1, le7=1, le8=1, le9=2, le10=2, le15=2, le20=3, le50=3
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="1"} 0`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="2"} 0`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="4"} 1`)
-	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="6"} 1`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="7"} 1`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="8"} 1`)
+	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="9"} 2`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="10"} 2`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="15"} 2`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="20"} 3`)
-	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="30"} 3`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="50"} 3`)
-	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="100"} 3`)
 	expectContains(t, output, `sidecar_priority_round_trip_ms_bucket{le="+Inf"} 3`)
 
 	// count=3, sum=3+9+18=30

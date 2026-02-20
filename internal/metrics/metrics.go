@@ -41,7 +41,7 @@ type Metrics struct {
 	SendErrors   atomic.Uint64
 
 	// Distribution of (TX arrival - last commit) in milliseconds
-	TxArrivalAfterCommitBuckets [8]atomic.Uint64 // bucket counts (non-cumulative)
+	TxArrivalAfterCommitBuckets [15]atomic.Uint64 // bucket counts (non-cumulative)
 	TxArrivalAfterCommitSum     atomic.Uint64    // sum of all values in microseconds
 	TxArrivalAfterCommitCount   atomic.Uint64    // total observations
 
@@ -150,7 +150,7 @@ func (m *Metrics) GetMemoryUsagePercent() float64 {
 
 // TxArrivalAfterCommitBoundariesMs defines the upper bounds (in ms) for each histogram bucket.
 // Bucket i counts observations <= BoundariesMs[i]. The last bucket is the overflow (>1000ms).
-var TxArrivalAfterCommitBoundariesMs = [8]float64{5, 10, 20, 50, 100, 200, 500, 1000}
+var TxArrivalAfterCommitBoundariesMs = [15]float64{5, 10, 20, 350, 380, 400, 420, 450, 500, 750, 780, 800, 820, 850, 1000}
 
 // RecordTxArrivalAfterCommit records how many milliseconds after the last commit a TX arrived.
 func (m *Metrics) RecordTxArrivalAfterCommit(ms float64) {
@@ -183,7 +183,7 @@ func (m *Metrics) GetTxArrivalAfterCommitCumulativeBuckets() (map[float64]uint64
 }
 
 // PriorityRoundTripBoundariesMs defines bucket upper bounds for the priority round-trip histogram.
-var PriorityRoundTripBoundariesMs = [10]float64{2, 4, 6, 8, 10, 15, 20, 30, 50, 100}
+var PriorityRoundTripBoundariesMs = [10]float64{1, 2, 4, 7, 8, 9, 10, 15, 20, 50}
 
 // RecordPriorityRoundTrip records the round-trip latency (ms) from sending a
 // prioritized TX to the node until the echo Insert event arrives back.
