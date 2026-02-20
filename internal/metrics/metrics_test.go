@@ -130,3 +130,106 @@ func TestRecordTxArrivalAfterCommit_BoundaryValues(t *testing.T) {
 		}
 	}
 }
+
+// --- Priority round-trip histogram tests ---
+
+func TestRecordPriorityRoundTrip_BucketPlacement(t *testing.T) {
+	m := &Metrics{}
+
+	// Boundaries: 2, 4, 6, 8, 10, 15, 20, 30, 50, 100
+	m.RecordPriorityRoundTrip(1)   // bucket 0 (le 2ms)
+	m.RecordPriorityRoundTrip(2)   // bucket 0 (le 2ms, boundary inclusive)
+	m.RecordPriorityRoundTrip(5)   // bucket 2 (le 6ms)
+	m.RecordPriorityRoundTrip(9)   // bucket 4 (le 10ms)
+	m.RecordPriorityRoundTrip(12)  // bucket 5 (le 15ms)
+	m.RecordPriorityRoundTrip(25)  // bucket 7 (le 30ms)
+	m.RecordPriorityRoundTrip(200) // bucket 9 (overflow, >100ms)
+
+	if m.PriorityRoundTripCount.Load() != 7 {
+		t.Errorf("expected count=7, got %d", m.PriorityRoundTripCount.Load())
+	}
+
+	// Non-cumulative buckets
+	expected := [10]uint64{2, 0, 1, 0, 1, 1, 0, 1, 0, 1}
+	for i, want := range expected {
+		got := m.PriorityRoundTripBuckets[i].Load()
+		if got != want {
+			t.Errorf("bucket[%d] (le %.0fms): expected %d, got %d",
+				i, PriorityRoundTripBoundariesMs[i], want, got)
+		}
+	}
+
+	// Sum: (1+2+5+9+12+25+200) * 1000 = 254_000 microseconds
+	expectedSum := uint64((1 + 2 + 5 + 9 + 12 + 25 + 200) * 1000)
+	if m.PriorityRoundTripSum.Load() != expectedSum {
+		t.Errorf("expected sum=%d, got %d", expectedSum, m.PriorityRoundTripSum.Load())
+	}
+}
+
+func TestGetPriorityRoundTripCumulativeBuckets(t *testing.T) {
+	m := &Metrics{}
+
+	m.RecordPriorityRoundTrip(3)  // bucket 1 (le 4ms)
+	m.RecordPriorityRoundTrip(7)  // bucket 3 (le 8ms)
+	m.RecordPriorityRoundTrip(14) // bucket 5 (le 15ms)
+
+	buckets, count, sumMs := m.GetPriorityRoundTripCumulativeBuckets()
+
+	if count != 3 {
+		t.Errorf("expected count=3, got %d", count)
+	}
+
+	expectedSum := 3.0 + 7.0 + 14.0
+	if sumMs < expectedSum-0.01 || sumMs > expectedSum+0.01 {
+		t.Errorf("expected sumMs=%.1f, got %.1f", expectedSum, sumMs)
+	}
+
+	// Cumulative: le2=0, le4=1, le6=1, le8=2, le10=2, le15=3, le20=3, le30=3, le50=3, le100=3
+	expectedCumulative := map[float64]uint64{
+		2: 0, 4: 1, 6: 1, 8: 2, 10: 2, 15: 3, 20: 3, 30: 3, 50: 3, 100: 3,
+	}
+	for boundary, want := range expectedCumulative {
+		got := buckets[boundary]
+		if got != want {
+			t.Errorf("cumulative bucket le_%.0f: expected %d, got %d", boundary, want, got)
+		}
+	}
+}
+
+func TestGetAvgPriorityRoundTripMs(t *testing.T) {
+	m := &Metrics{}
+
+	// Zero observations should return 0
+	avg := m.getAvgPriorityRoundTripMs()
+	if avg != 0 {
+		t.Errorf("expected avg=0 with no observations, got %f", avg)
+	}
+
+	m.RecordPriorityRoundTrip(8)
+	m.RecordPriorityRoundTrip(10)
+	m.RecordPriorityRoundTrip(12)
+
+	avg = m.getAvgPriorityRoundTripMs()
+	expected := 10.0 // (8+10+12)/3
+	if avg < expected-0.01 || avg > expected+0.01 {
+		t.Errorf("expected avg=%.1f, got %.1f", expected, avg)
+	}
+}
+
+func TestRecordPriorityRoundTrip_ZeroObservations(t *testing.T) {
+	m := &Metrics{}
+
+	buckets, count, sumMs := m.GetPriorityRoundTripCumulativeBuckets()
+
+	if count != 0 {
+		t.Errorf("expected count=0, got %d", count)
+	}
+	if sumMs != 0 {
+		t.Errorf("expected sumMs=0, got %f", sumMs)
+	}
+	for boundary, v := range buckets {
+		if v != 0 {
+			t.Errorf("expected bucket le_%.0f=0, got %d", boundary, v)
+		}
+	}
+}

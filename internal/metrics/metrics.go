@@ -45,6 +45,12 @@ type Metrics struct {
 	TxArrivalAfterCommitSum     atomic.Uint64    // sum of all values in microseconds
 	TxArrivalAfterCommitCount   atomic.Uint64    // total observations
 
+	// Distribution of priority round-trip latency in milliseconds
+	// Measures: sidecar sends prioritized TX → node inserts it → echo Insert arrives back
+	PriorityRoundTripBuckets [10]atomic.Uint64 // bucket counts (non-cumulative)
+	PriorityRoundTripSum     atomic.Uint64     // sum in microseconds
+	PriorityRoundTripCount   atomic.Uint64     // total observations
+
 	// System metrics (updated periodically)
 	CPUUsagePercent    atomic.Uint64 // stored as uint64 * 100 for precision
 	MemoryUsageBytes   atomic.Uint64
@@ -176,6 +182,40 @@ func (m *Metrics) GetTxArrivalAfterCommitCumulativeBuckets() (map[float64]uint64
 	return buckets, totalCount, sumMs
 }
 
+// PriorityRoundTripBoundariesMs defines bucket upper bounds for the priority round-trip histogram.
+var PriorityRoundTripBoundariesMs = [10]float64{2, 4, 6, 8, 10, 15, 20, 30, 50, 100}
+
+// RecordPriorityRoundTrip records the round-trip latency (ms) from sending a
+// prioritized TX to the node until the echo Insert event arrives back.
+func (m *Metrics) RecordPriorityRoundTrip(ms float64) {
+	m.PriorityRoundTripSum.Add(uint64(ms * 1000)) // store as microseconds
+	m.PriorityRoundTripCount.Add(1)
+	for i, boundary := range PriorityRoundTripBoundariesMs {
+		if ms <= boundary {
+			m.PriorityRoundTripBuckets[i].Add(1)
+			return
+		}
+	}
+	m.PriorityRoundTripBuckets[len(PriorityRoundTripBoundariesMs)-1].Add(1) // overflow
+}
+
+// GetPriorityRoundTripCumulativeBuckets returns cumulative bucket counts
+// keyed by upper bound, suitable for Prometheus histogram exposition.
+func (m *Metrics) GetPriorityRoundTripCumulativeBuckets() (map[float64]uint64, uint64, float64) {
+	totalCount := m.PriorityRoundTripCount.Load()
+	sumMicros := m.PriorityRoundTripSum.Load()
+	sumMs := float64(sumMicros) / 1000.0
+
+	buckets := make(map[float64]uint64, len(PriorityRoundTripBoundariesMs))
+	var cumulative uint64
+	for i, boundary := range PriorityRoundTripBoundariesMs {
+		cumulative += m.PriorityRoundTripBuckets[i].Load()
+		buckets[boundary] = cumulative
+	}
+
+	return buckets, totalCount, sumMs
+}
+
 // Snapshot represents a point-in-time snapshot of all metrics
 type Snapshot struct {
 	Timestamp       time.Time `json:"timestamp"`
@@ -216,6 +256,11 @@ type Snapshot struct {
 	TxArrivalAfterCommitAvgMs   float64           `json:"tx_arrival_after_commit_avg_ms"`
 	TxArrivalAfterCommitCount   uint64            `json:"tx_arrival_after_commit_count"`
 	TxArrivalAfterCommitBuckets map[string]uint64 `json:"tx_arrival_after_commit_buckets"`
+
+	// Priority round-trip distribution
+	PriorityRoundTripAvgMs   float64           `json:"priority_round_trip_avg_ms"`
+	PriorityRoundTripCount   uint64            `json:"priority_round_trip_count"`
+	PriorityRoundTripBuckets map[string]uint64 `json:"priority_round_trip_buckets"`
 
 	// System metrics
 	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
@@ -270,6 +315,11 @@ func (m *Metrics) GetSnapshot() interface{} {
 		TxArrivalAfterCommitCount:   m.TxArrivalAfterCommitCount.Load(),
 		TxArrivalAfterCommitBuckets: m.getArrivalBucketsSnapshot(),
 
+		// Priority round-trip distribution
+		PriorityRoundTripAvgMs:   m.getAvgPriorityRoundTripMs(),
+		PriorityRoundTripCount:   m.PriorityRoundTripCount.Load(),
+		PriorityRoundTripBuckets: m.getRoundTripBucketsSnapshot(),
+
 		// System metrics (convert bytes to MB)
 		CPUUsagePercent:    m.GetCPUUsagePercent(),
 		MemoryUsageMB:      float64(m.MemoryUsageBytes.Load()) / 1024.0 / 1024.0,
@@ -296,6 +346,24 @@ func (m *Metrics) getArrivalBucketsSnapshot() map[string]uint64 {
 	for i, boundary := range TxArrivalAfterCommitBoundariesMs {
 		label := fmt.Sprintf("le_%.0fms", boundary)
 		buckets[label] = m.TxArrivalAfterCommitBuckets[i].Load()
+	}
+	return buckets
+}
+
+func (m *Metrics) getAvgPriorityRoundTripMs() float64 {
+	count := m.PriorityRoundTripCount.Load()
+	if count == 0 {
+		return 0
+	}
+	sumMicros := m.PriorityRoundTripSum.Load()
+	return float64(sumMicros) / float64(count) / 1000.0
+}
+
+func (m *Metrics) getRoundTripBucketsSnapshot() map[string]uint64 {
+	buckets := make(map[string]uint64, len(PriorityRoundTripBoundariesMs))
+	for i, boundary := range PriorityRoundTripBoundariesMs {
+		label := fmt.Sprintf("le_%.0fms", boundary)
+		buckets[label] = m.PriorityRoundTripBuckets[i].Load()
 	}
 	return buckets
 }

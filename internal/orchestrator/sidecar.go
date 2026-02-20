@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,10 @@ type Sidecar struct {
 	lastSentAt     atomic.Int64  // Unix timestamp in nanoseconds of last tx sent with priority
 	lastCommitTime atomic.Int64  // Unix nanoseconds of last Commit event processed
 
+	// Tracks TXs we sent with priority, keyed by hash → send time
+	prioritizedTxs   map[common.Hash]time.Time
+	prioritizedTxsMu sync.Mutex
+
 	// Components
 	txpoolClient     *ipc.TxPoolIPCClient
 	txPool           *pool.TransactionPool
@@ -61,14 +66,15 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 	m := metrics.InitMetrics()
 
 	s := &Sidecar{
-		config:       config,
-		shutdownChan: shutdownChan,
-		txpoolClient: ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath),
-		txPool:       pool.NewTransactionPool(config.PoolMaxDuration),
-		filter:       filter,
-		metrics:      m,
-		ctx:          ctx,
-		cancel:       cancel,
+		config:         config,
+		shutdownChan:   shutdownChan,
+		txpoolClient:   ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath),
+		txPool:         pool.NewTransactionPool(config.PoolMaxDuration),
+		filter:         filter,
+		metrics:        m,
+		prioritizedTxs: make(map[common.Hash]time.Time),
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 
 	// Create monitoring server with health, metrics, and optionally Prometheus endpoints
@@ -204,7 +210,7 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 		// Record arrival-after-commit before any processing
 		if lastCommit := s.lastCommitTime.Load(); lastCommit > 0 {
 			deltaMs := float64(time.Now().UnixNano()-lastCommit) / 1e6
-			s.metrics.RecordTxArrivalAfterCommit(deltaMs)
+			go s.metrics.RecordTxArrivalAfterCommit(deltaMs)
 		}
 
 		// New transaction inserted into txpool
@@ -223,6 +229,7 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 		// Transaction committed to blockchain - remove from pool if exists
 		log.Debug("Received Commit event", "tx_hash", event.TxHash.Hex())
 		s.lastCommitTime.Store(time.Now().UnixNano())
+		s.removePrioritizedTx(event.TxHash)
 		removedTx := s.txPool.RemoveTransaction(event.TxHash)
 		if removedTx != nil {
 			log.Info("Transaction committed and removed from pool", "hash", event.TxHash.Hex())
@@ -232,6 +239,7 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 		// Transaction dropped from txpool
 		log.Info("Received Drop event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
 		s.metrics.TxDropped.Add(1)
+		s.removePrioritizedTx(event.TxHash)
 		removedTx := s.txPool.RemoveTransaction(event.TxHash)
 		if removedTx != nil {
 			log.Info("Transaction dropped and removed from pool", "hash", event.TxHash.Hex(), "source", removedTx.Source)
@@ -240,6 +248,7 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 	case ipc.EvictAction:
 		// Transaction evicted from txpool
 		log.Info("Received Evict event", "tx_hash", event.TxHash.Hex(), "reason", action.Reason)
+		s.removePrioritizedTx(event.TxHash)
 		removedTx := s.txPool.RemoveTransaction(event.TxHash)
 		if removedTx != nil {
 			log.Info("Transaction evicted and removed from pool", "hash", event.TxHash.Hex())
@@ -266,7 +275,20 @@ func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction, o
 
 	// Check if transaction already exists in pool
 	if s.txPool.Exists(hash) {
-		log.Debug("Transaction already in pool", "hash", hash.Hex())
+		// Check if this is an echo of a TX we prioritized
+		s.prioritizedTxsMu.Lock()
+		if sendTime, ok := s.prioritizedTxs[hash]; ok {
+			deltaMs := float64(time.Since(sendTime).Nanoseconds()) / 1e6
+			delete(s.prioritizedTxs, hash)
+			s.prioritizedTxsMu.Unlock()
+			hashHex := hash.Hex()
+			go func() {
+				s.metrics.RecordPriorityRoundTrip(deltaMs)
+				log.Info("Priority round-trip measured", "hash", hashHex, "latency_ms", deltaMs)
+			}()
+		} else {
+			s.prioritizedTxsMu.Unlock()
+		}
 		return
 	}
 
@@ -373,6 +395,18 @@ func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int)
 	s.txStreamed.Add(1)
 	s.metrics.TxSentToNode.Add(1)
 	s.lastSentAt.Store(time.Now().UnixNano())
+
+	// Track send time for round-trip latency measurement
+	s.prioritizedTxsMu.Lock()
+	s.prioritizedTxs[tx.Hash()] = time.Now()
+	s.prioritizedTxsMu.Unlock()
+}
+
+// removePrioritizedTx removes a hash from the prioritized TX tracking map.
+func (s *Sidecar) removePrioritizedTx(hash common.Hash) {
+	s.prioritizedTxsMu.Lock()
+	delete(s.prioritizedTxs, hash)
+	s.prioritizedTxsMu.Unlock()
 }
 
 // cleanupOldTransactions periodically removes old transactions
@@ -403,6 +437,16 @@ func (s *Sidecar) cleanupOldTransactions() {
 			// Update pool size metric
 			s.poolSize.Store(sizeAfter)
 			s.metrics.PoolSize.Store(sizeAfter)
+
+			// Clean up stale prioritized TX entries
+			s.prioritizedTxsMu.Lock()
+			now := time.Now()
+			for hash, sendTime := range s.prioritizedTxs {
+				if now.Sub(sendTime) > s.config.PoolMaxDuration {
+					delete(s.prioritizedTxs, hash)
+				}
+			}
+			s.prioritizedTxsMu.Unlock()
 		}
 	}
 }
