@@ -66,9 +66,11 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 	m := metrics.InitMetrics()
 
 	s := &Sidecar{
-		config:         config,
-		shutdownChan:   shutdownChan,
-		txpoolClient:   ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath),
+		config:       config,
+		shutdownChan: shutdownChan,
+		txpoolClient: ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath, func() {
+			m.NodeReconnections.Add(1)
+		}),
 		txPool:         pool.NewTransactionPool(config.PoolMaxDuration),
 		filter:         filter,
 		metrics:        m,
@@ -225,16 +227,22 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 
 	case ipc.CommitAction:
 		s.lastCommitTime.Store(time.Now().UnixNano())
-		s.removePrioritizedTx(event.TxHash)
+		if s.removePrioritizedTx(event.TxHash) {
+			s.metrics.PrioritizedTxCommittedBeforeEcho.Add(1)
+		}
 		s.txPool.RemoveTransaction(event.TxHash)
 
 	case ipc.DropAction:
 		s.metrics.TxDropped.Add(1)
-		s.removePrioritizedTx(event.TxHash)
+		if s.removePrioritizedTx(event.TxHash) {
+			s.metrics.PrioritizedTxDroppedBeforeEcho.Add(1)
+		}
 		s.txPool.RemoveTransaction(event.TxHash)
 
 	case ipc.EvictAction:
-		s.removePrioritizedTx(event.TxHash)
+		if s.removePrioritizedTx(event.TxHash) {
+			s.metrics.PrioritizedTxEvictedBeforeEcho.Add(1)
+		}
 		s.txPool.RemoveTransaction(event.TxHash)
 
 	default:
@@ -386,10 +394,13 @@ func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int)
 }
 
 // removePrioritizedTx removes a hash from the prioritized TX tracking map.
-func (s *Sidecar) removePrioritizedTx(hash common.Hash) {
+// Returns true if the hash was present (i.e. we sent it with priority but never got the echo).
+func (s *Sidecar) removePrioritizedTx(hash common.Hash) bool {
 	s.prioritizedTxsMu.Lock()
+	_, existed := s.prioritizedTxs[hash]
 	delete(s.prioritizedTxs, hash)
 	s.prioritizedTxsMu.Unlock()
+	return existed
 }
 
 // cleanupOldTransactions periodically removes old transactions

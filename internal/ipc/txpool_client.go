@@ -24,15 +24,18 @@ type TxPoolIPCClient struct {
 	eventChan     chan EthTxPoolEvent
 	reconnectChan chan struct{}
 	connected     atomic.Bool
+	onReconnect   func() // called on successful reconnection (not initial connect)
 }
 
-// NewTxPoolIPCClient creates a new txpool IPC client
-func NewTxPoolIPCClient(ctx context.Context, socketPath string) *TxPoolIPCClient {
+// NewTxPoolIPCClient creates a new txpool IPC client.
+// onReconnect is called on each successful reconnection (not the initial connect).
+func NewTxPoolIPCClient(ctx context.Context, socketPath string, onReconnect func()) *TxPoolIPCClient {
 	client := &TxPoolIPCClient{
 		socketPath:    socketPath,
 		ctx:           ctx,
 		eventChan:     make(chan EthTxPoolEvent, 1000), // Buffer for events
 		reconnectChan: make(chan struct{}, 1),
+		onReconnect:   onReconnect,
 	}
 
 	// Start background reconnection loop
@@ -49,6 +52,7 @@ func (c *TxPoolIPCClient) reconnectionLoop() {
 	backoff := 100 * time.Millisecond
 	maxBackoff := 5 * time.Second
 	attempt := 0
+	wasConnected := false // track whether this is a reconnection vs initial connect
 
 	for {
 		select {
@@ -75,6 +79,12 @@ func (c *TxPoolIPCClient) reconnectionLoop() {
 					log.Info("Connected to txpool IPC", "socket", c.socketPath)
 					backoff = 100 * time.Millisecond
 					attempt = 0
+
+					// Track reconnections (not initial connect)
+					if wasConnected && c.onReconnect != nil {
+						c.onReconnect()
+					}
+					wasConnected = true
 
 					// Start reading events in background
 					go c.readEvents(conn)
