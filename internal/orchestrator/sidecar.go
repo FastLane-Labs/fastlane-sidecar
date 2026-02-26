@@ -272,11 +272,10 @@ func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction, o
 			deltaMs := float64(time.Since(sendTime).Nanoseconds()) / 1e6
 			delete(s.prioritizedTxs, hash)
 			s.prioritizedTxsMu.Unlock()
-			hashHex := hash.Hex()
-			go func() {
-				s.metrics.RecordPriorityRoundTrip(deltaMs)
-				log.Info("Priority round-trip measured", "hash", hashHex, "latency_ms", deltaMs)
-			}()
+			go func(t time.Time, h common.Hash, ms float64) {
+				s.metrics.RecordPriorityRoundTrip(ms)
+				log.Info("Priority TX echo received", "hash", h.Hex(), "latency_ms", ms, "t", t)
+			}(time.Now(), hash, deltaMs)
 		} else {
 			s.prioritizedTxsMu.Unlock()
 		}
@@ -330,10 +329,12 @@ func (s *Sidecar) handleTOBBid(tx *ethTypes.Transaction, bidData *types.BidData)
 	// Compute priority
 	priority := priorities.CalculateTOBPriority(bidData.BidAmount)
 
+	go func(t time.Time, h common.Hash, bid *big.Int, p *big.Int) {
+		log.Info("TOB bid classified", "hash", h.Hex(), "bid_amount", bid.String(), "priority", priorities.FormatPriority(p), "t", t)
+	}(time.Now(), tx.Hash(), bidData.BidAmount, priority)
+
 	// Stream immediately to txpool
 	s.streamTransaction(tx, priority)
-
-	go log.Info("Processed TOB bid", "bid_amount", bidData.BidAmount.String(), "priority", priorities.FormatPriority(priority))
 }
 
 // handleBackrunBid processes backrun bid - look for opportunity and stream both if found
@@ -347,12 +348,16 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 	targetTx := s.txPool.GetTransaction(targetTxHash)
 
 	if targetTx == nil {
-		go log.Info("Target transaction not found for backrun bid", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex())
+		go func(t time.Time, bh common.Hash, th common.Hash) {
+			log.Info("Backrun target not found", "bid_hash", bh.Hex(), "target_hash", th.Hex(), "t", t)
+		}(time.Now(), bidHash, targetTxHash)
 		return
 	}
 
 	// Found target transaction - compute priorities and stream both
-	// Use target transaction hash as backrun_id for grouping
+	go func(t time.Time, bh common.Hash, th common.Hash, bid *big.Int) {
+		log.Info("Backrun pair classified", "bid_hash", bh.Hex(), "target_hash", th.Hex(), "bid_amount", bid.String(), "t", t)
+	}(time.Now(), bidHash, targetTxHash, bidData.BidAmount)
 
 	// Stream opportunity transaction first
 	oppPriority := priorities.CalculateOpportunityPriority(targetTxHash)
@@ -364,8 +369,6 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 
 	// Track successful backrun pair match
 	s.metrics.BackrunPairsMatched.Add(1)
-
-	go log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String())
 }
 
 // streamTransaction sends a transaction with priority to the txpool
@@ -386,6 +389,10 @@ func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int)
 	s.txStreamed.Add(1)
 	s.metrics.TxSentToNode.Add(1)
 	s.lastSentAt.Store(time.Now().UnixNano())
+
+	go func(t time.Time, h common.Hash) {
+		log.Info("Priority TX sent to node", "hash", h.Hex(), "t", t)
+	}(time.Now(), tx.Hash())
 
 	// Track send time for round-trip latency measurement
 	s.prioritizedTxsMu.Lock()
