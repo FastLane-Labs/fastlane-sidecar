@@ -4,7 +4,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
@@ -102,7 +101,6 @@ func (tp *TransactionPool) CleanupOldTransactions() {
 	for hash, tx := range tp.allTxs {
 		if tx.ReceivedAt.Before(cutoff) {
 			delete(tp.allTxs, hash)
-			log.Info("Removed expired transaction", "hash", hash.Hex(), "age", now.Sub(tx.ReceivedAt))
 		}
 	}
 }
