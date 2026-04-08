@@ -40,6 +40,11 @@ type Metrics struct {
 	DecodeErrors atomic.Uint64
 	SendErrors   atomic.Uint64
 
+	// Diagnostic: prioritized TX fate before echo Insert arrives
+	PrioritizedTxCommittedBeforeEcho atomic.Uint64 // TX committed before echo (timing race)
+	PrioritizedTxDroppedBeforeEcho   atomic.Uint64 // TX dropped before echo (NonceTooLow, etc.)
+	PrioritizedTxEvictedBeforeEcho   atomic.Uint64 // TX evicted before echo
+
 	// Distribution of (TX arrival - last commit) in milliseconds
 	TxArrivalAfterCommitBuckets [15]atomic.Uint64 // bucket counts (non-cumulative)
 	TxArrivalAfterCommitSum     atomic.Uint64     // sum of all values in microseconds
@@ -252,6 +257,11 @@ type Snapshot struct {
 	DecodeErrors uint64 `json:"decode_errors"`
 	SendErrors   uint64 `json:"send_errors"`
 
+	// Diagnostic: prioritized TX fate (echo never arrived)
+	PrioritizedTxCommittedBeforeEcho uint64 `json:"prioritized_tx_committed_before_echo"`
+	PrioritizedTxDroppedBeforeEcho   uint64 `json:"prioritized_tx_dropped_before_echo"`
+	PrioritizedTxEvictedBeforeEcho   uint64 `json:"prioritized_tx_evicted_before_echo"`
+
 	// TX arrival after commit distribution
 	TxArrivalAfterCommitAvgMs   float64           `json:"tx_arrival_after_commit_avg_ms"`
 	TxArrivalAfterCommitCount   uint64            `json:"tx_arrival_after_commit_count"`
@@ -309,6 +319,11 @@ func (m *Metrics) GetSnapshot() interface{} {
 		// Error metrics
 		DecodeErrors: m.DecodeErrors.Load(),
 		SendErrors:   m.SendErrors.Load(),
+
+		// Diagnostic: prioritized TX fate
+		PrioritizedTxCommittedBeforeEcho: m.PrioritizedTxCommittedBeforeEcho.Load(),
+		PrioritizedTxDroppedBeforeEcho:   m.PrioritizedTxDroppedBeforeEcho.Load(),
+		PrioritizedTxEvictedBeforeEcho:   m.PrioritizedTxEvictedBeforeEcho.Load(),
 
 		// TX arrival after commit distribution
 		TxArrivalAfterCommitAvgMs:   m.getAvgTxArrivalAfterCommitMs(),

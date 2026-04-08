@@ -66,9 +66,11 @@ func NewSidecar(config *config.Config, shutdownChan chan struct{}) (*Sidecar, er
 	m := metrics.InitMetrics()
 
 	s := &Sidecar{
-		config:         config,
-		shutdownChan:   shutdownChan,
-		txpoolClient:   ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath),
+		config:       config,
+		shutdownChan: shutdownChan,
+		txpoolClient: ipc.NewTxPoolIPCClient(ctx, config.TxPoolSocketPath, func() {
+			m.NodeReconnections.Add(1)
+		}),
 		txPool:         pool.NewTransactionPool(config.PoolMaxDuration),
 		filter:         filter,
 		metrics:        m,
@@ -225,16 +227,22 @@ func (s *Sidecar) handleTxPoolEvent(event ipc.EthTxPoolEvent) {
 
 	case ipc.CommitAction:
 		s.lastCommitTime.Store(time.Now().UnixNano())
-		s.removePrioritizedTx(event.TxHash)
+		if s.removePrioritizedTx(event.TxHash) {
+			s.metrics.PrioritizedTxCommittedBeforeEcho.Add(1)
+		}
 		s.txPool.RemoveTransaction(event.TxHash)
 
 	case ipc.DropAction:
 		s.metrics.TxDropped.Add(1)
-		s.removePrioritizedTx(event.TxHash)
+		if s.removePrioritizedTx(event.TxHash) {
+			s.metrics.PrioritizedTxDroppedBeforeEcho.Add(1)
+		}
 		s.txPool.RemoveTransaction(event.TxHash)
 
 	case ipc.EvictAction:
-		s.removePrioritizedTx(event.TxHash)
+		if s.removePrioritizedTx(event.TxHash) {
+			s.metrics.PrioritizedTxEvictedBeforeEcho.Add(1)
+		}
 		s.txPool.RemoveTransaction(event.TxHash)
 
 	default:
@@ -264,11 +272,10 @@ func (s *Sidecar) handleIncomingTransactionFromEvent(tx *ethTypes.Transaction, o
 			deltaMs := float64(time.Since(sendTime).Nanoseconds()) / 1e6
 			delete(s.prioritizedTxs, hash)
 			s.prioritizedTxsMu.Unlock()
-			hashHex := hash.Hex()
-			go func() {
-				s.metrics.RecordPriorityRoundTrip(deltaMs)
-				log.Info("Priority round-trip measured", "hash", hashHex, "latency_ms", deltaMs)
-			}()
+			go func(t time.Time, h common.Hash, ms float64) {
+				s.metrics.RecordPriorityRoundTrip(ms)
+				log.Info("Priority TX echo received", "hash", h.Hex(), "latency_ms", ms, "t", t)
+			}(time.Now(), hash, deltaMs)
 		} else {
 			s.prioritizedTxsMu.Unlock()
 		}
@@ -322,10 +329,12 @@ func (s *Sidecar) handleTOBBid(tx *ethTypes.Transaction, bidData *types.BidData)
 	// Compute priority
 	priority := priorities.CalculateTOBPriority(bidData.BidAmount)
 
+	go func(t time.Time, h common.Hash, bidStr string, prioStr string) {
+		log.Info("TOB bid classified", "hash", h.Hex(), "bid_amount", bidStr, "priority", prioStr, "t", t)
+	}(time.Now(), tx.Hash(), bidData.BidAmount.String(), priorities.FormatPriority(priority))
+
 	// Stream immediately to txpool
 	s.streamTransaction(tx, priority)
-
-	go log.Info("Processed TOB bid", "bid_amount", bidData.BidAmount.String(), "priority", priorities.FormatPriority(priority))
 }
 
 // handleBackrunBid processes backrun bid - look for opportunity and stream both if found
@@ -339,12 +348,16 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 	targetTx := s.txPool.GetTransaction(targetTxHash)
 
 	if targetTx == nil {
-		go log.Info("Target transaction not found for backrun bid", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex())
+		go func(t time.Time, bh common.Hash, th common.Hash) {
+			log.Info("Backrun target not found", "bid_hash", bh.Hex(), "target_hash", th.Hex(), "t", t)
+		}(time.Now(), bidHash, targetTxHash)
 		return
 	}
 
 	// Found target transaction - compute priorities and stream both
-	// Use target transaction hash as backrun_id for grouping
+	go func(t time.Time, bh common.Hash, th common.Hash, bidStr string) {
+		log.Info("Backrun pair classified", "bid_hash", bh.Hex(), "target_hash", th.Hex(), "bid_amount", bidStr, "t", t)
+	}(time.Now(), bidHash, targetTxHash, bidData.BidAmount.String())
 
 	// Stream opportunity transaction first
 	oppPriority := priorities.CalculateOpportunityPriority(targetTxHash)
@@ -356,8 +369,6 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 
 	// Track successful backrun pair match
 	s.metrics.BackrunPairsMatched.Add(1)
-
-	go log.Info("Processed backrun pair immediately", "bid_hash", bidHash.Hex(), "target_hash", targetTxHash.Hex(), "bid_amount", bidData.BidAmount.String())
 }
 
 // streamTransaction sends a transaction with priority to the txpool
@@ -379,6 +390,10 @@ func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int)
 	s.metrics.TxSentToNode.Add(1)
 	s.lastSentAt.Store(time.Now().UnixNano())
 
+	go func(t time.Time, h common.Hash) {
+		log.Info("Priority TX sent to node", "hash", h.Hex(), "t", t)
+	}(time.Now(), tx.Hash())
+
 	// Track send time for round-trip latency measurement
 	s.prioritizedTxsMu.Lock()
 	s.prioritizedTxs[tx.Hash()] = time.Now()
@@ -386,10 +401,13 @@ func (s *Sidecar) streamTransaction(tx *ethTypes.Transaction, priority *big.Int)
 }
 
 // removePrioritizedTx removes a hash from the prioritized TX tracking map.
-func (s *Sidecar) removePrioritizedTx(hash common.Hash) {
+// Returns true if the hash was present (i.e. we sent it with priority but never got the echo).
+func (s *Sidecar) removePrioritizedTx(hash common.Hash) bool {
 	s.prioritizedTxsMu.Lock()
+	_, existed := s.prioritizedTxs[hash]
 	delete(s.prioritizedTxs, hash)
 	s.prioritizedTxsMu.Unlock()
+	return existed
 }
 
 // cleanupOldTransactions periodically removes old transactions

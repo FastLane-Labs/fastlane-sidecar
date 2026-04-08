@@ -99,11 +99,15 @@ func (tp *TransactionPool) CleanupOldTransactions() {
 	cutoff := now.Add(-tp.maxDuration)
 
 	// Clean up main transaction pool
+	removed := 0
 	for hash, tx := range tp.allTxs {
 		if tx.ReceivedAt.Before(cutoff) {
 			delete(tp.allTxs, hash)
-			log.Info("Removed expired transaction", "hash", hash.Hex(), "age", now.Sub(tx.ReceivedAt))
+			removed++
 		}
+	}
+	if removed > 0 {
+		log.Debug("Cleanup removed expired transactions", "count", removed)
 	}
 }
 
