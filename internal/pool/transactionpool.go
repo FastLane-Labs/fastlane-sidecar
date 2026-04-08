@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/FastLane-Labs/fastlane-sidecar/pkg/log"
 	"github.com/FastLane-Labs/fastlane-sidecar/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
@@ -98,10 +99,15 @@ func (tp *TransactionPool) CleanupOldTransactions() {
 	cutoff := now.Add(-tp.maxDuration)
 
 	// Clean up main transaction pool
+	removed := 0
 	for hash, tx := range tp.allTxs {
 		if tx.ReceivedAt.Before(cutoff) {
 			delete(tp.allTxs, hash)
+			removed++
 		}
+	}
+	if removed > 0 {
+		log.Debug("Cleanup removed expired transactions", "count", removed)
 	}
 }
 

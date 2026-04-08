@@ -329,9 +329,9 @@ func (s *Sidecar) handleTOBBid(tx *ethTypes.Transaction, bidData *types.BidData)
 	// Compute priority
 	priority := priorities.CalculateTOBPriority(bidData.BidAmount)
 
-	go func(t time.Time, h common.Hash, bid *big.Int, p *big.Int) {
-		log.Info("TOB bid classified", "hash", h.Hex(), "bid_amount", bid.String(), "priority", priorities.FormatPriority(p), "t", t)
-	}(time.Now(), tx.Hash(), bidData.BidAmount, priority)
+	go func(t time.Time, h common.Hash, bidStr string, prioStr string) {
+		log.Info("TOB bid classified", "hash", h.Hex(), "bid_amount", bidStr, "priority", prioStr, "t", t)
+	}(time.Now(), tx.Hash(), bidData.BidAmount.String(), priorities.FormatPriority(priority))
 
 	// Stream immediately to txpool
 	s.streamTransaction(tx, priority)
@@ -355,9 +355,9 @@ func (s *Sidecar) handleBackrunBid(tx *ethTypes.Transaction, bidHash common.Hash
 	}
 
 	// Found target transaction - compute priorities and stream both
-	go func(t time.Time, bh common.Hash, th common.Hash, bid *big.Int) {
-		log.Info("Backrun pair classified", "bid_hash", bh.Hex(), "target_hash", th.Hex(), "bid_amount", bid.String(), "t", t)
-	}(time.Now(), bidHash, targetTxHash, bidData.BidAmount)
+	go func(t time.Time, bh common.Hash, th common.Hash, bidStr string) {
+		log.Info("Backrun pair classified", "bid_hash", bh.Hex(), "target_hash", th.Hex(), "bid_amount", bidStr, "t", t)
+	}(time.Now(), bidHash, targetTxHash, bidData.BidAmount.String())
 
 	// Stream opportunity transaction first
 	oppPriority := priorities.CalculateOpportunityPriority(targetTxHash)
