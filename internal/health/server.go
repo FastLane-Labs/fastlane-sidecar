@@ -1,6 +1,7 @@
 package health
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -69,7 +70,13 @@ func (s *Server) Start() error {
 // Stop gracefully stops the HTTP server
 func (s *Server) Stop() error {
 	log.Info("Stopping monitoring server")
-	return s.httpServer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		log.Error("monitoring server shutdown error", "error", err)
+		return s.httpServer.Close()
+	}
+	return nil
 }
 
 // handleHealth handles GET /health requests
