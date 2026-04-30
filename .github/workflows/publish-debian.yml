@@ -7,6 +7,7 @@ jobs:
   build-and-publish-debian:
     name: Build and Publish Debian Package
     runs-on: ubuntu-24.04
+    environment: production
     strategy:
       matrix:
         package: [sidecar]
