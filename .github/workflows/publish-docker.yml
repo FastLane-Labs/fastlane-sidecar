@@ -1,0 +1,113 @@
+name: Publish Docker Image
+
+on:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_SIDECAR: fastlane-labs/fastlane-sidecar
+
+jobs:
+  build-and-push-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      matrix:
+        binary: [sidecar]
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine version and Docker tags
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # For tags like v1.0.0, extract 1.0.0
+            TAG_NAME="${{ github.ref_name }}"
+            if [[ "${TAG_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              VERSION="${BASH_REMATCH[1]}"
+              echo "📦 Tagged release: ${VERSION}"
+            else
+              echo "❌ Invalid tag format: ${TAG_NAME}. Expected format: v<major>.<minor>.<patch>"
+              exit 1
+            fi
+          else
+            # For manual triggers: use commit SHA
+            SHORT_SHA="$(git rev-parse --short HEAD)"
+            VERSION="0~dev.${SHORT_SHA}"
+            echo "📦 Development build: ${VERSION}"
+          fi
+
+          echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "is_tag=${{ github.ref_type == 'tag' }}" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}
+          tags: |
+            type=semver,pattern={{version}},enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=semver,pattern={{major}},enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=raw,value=latest,enable=${{ steps.version.outputs.is_tag == 'true' }}
+            type=raw,value=dev,enable=${{ steps.version.outputs.is_tag == 'false' }}
+            type=raw,value=sha-${{ steps.version.outputs.short_sha }},enable=${{ steps.version.outputs.is_tag == 'false' }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            BINARY=${{ matrix.binary }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.binary }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.binary }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign image with Cosign (keyless, GitHub OIDC)
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Sign by digest so the multi-arch manifest list is signed,
+          # not just one architecture's tag.
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
