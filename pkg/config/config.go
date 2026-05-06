@@ -20,7 +20,6 @@ var FastlaneContractAddresses = map[string]string{
 type Config struct {
 	LogLevel         string
 	Network          string
-	HomePath         string
 	TxPoolSocketPath string // Txpool IPC socket path (default: /home/monad/monad-bft/mempool.sock)
 	PoolMaxDuration  time.Duration
 	FastlaneContract string // Hex address of the fastlane auction contract
@@ -53,8 +52,6 @@ func NewConfig() *Config {
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  # Run with default settings\n")
 		fmt.Fprintf(os.Stderr, "  %s\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  # Run with custom home directory\n")
-		fmt.Fprintf(os.Stderr, "  %s -home=/var/lib/fastlane/\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Run on mainnet\n")
 		fmt.Fprintf(os.Stderr, "  %s -network=mainnet\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  # Run with info logging\n")
@@ -64,7 +61,6 @@ func NewConfig() *Config {
 
 	fs.StringVar(&conf.Network, "network", "testnet", "Network name: testnet, mainnet")
 	fs.StringVar(&conf.LogLevel, "log-level", "debug", "Log level (debug, info, warn, error)")
-	fs.StringVar(&conf.HomePath, "home", "/home/monad/fastlane/", "Fastlane home directory")
 	fs.StringVar(&txpoolSocketPath, "txpool-socket", "/home/monad/monad-bft/mempool.sock", "Txpool IPC socket path")
 	fs.IntVar(&poolMaxDurationMs, "pool-max-duration-ms", 2500, "Maximum time to hold transactions in pool (ms)")
 	fs.StringVar(&contractOverride, "fastlane-contract", "", "Override fastlane contract address (optional)")
