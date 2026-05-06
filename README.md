@@ -21,14 +21,6 @@ docker run -d \
   --name fastlane-sidecar \
   -v /home/monad/monad-bft:/home/monad/monad-bft \
   ghcr.io/fastlane-labs/fastlane-sidecar:latest
-
-# Or specify a custom home directory
-docker run -d \
-
-  --name fastlane-sidecar \
-  -v /custom/path:/custom/path \
-  ghcr.io/fastlane-labs/fastlane-sidecar:latest \
-  -home=/custom/path/
 ```
 
 #### Build from Source
@@ -95,25 +87,7 @@ sudo systemctl restart fastlane-sidecar
 dpkg -l | grep fastlane-sidecar
 ```
 
-**Step 3: Configure the Service (Optional)**
-
-The service uses the default home directory `/home/monad/fastlane/`.
-
-If your Monad validator uses a different path, configure it:
-
-```bash
-# Edit the service configuration
-sudo systemctl edit fastlane-sidecar
-
-# Add the following in the editor that opens:
-# [Service]
-# ExecStart=
-# ExecStart=/usr/bin/fastlane-sidecar -log-level=info -home=/your/custom/path/
-
-# Save and exit (Ctrl+X, then Y, then Enter in nano)
-```
-
-**Step 4: Start and Enable the Service**
+**Step 3: Start and Enable the Service**
 
 ```bash
 # Enable the service to start on boot
@@ -138,7 +112,7 @@ wget https://github.com/FastLane-Labs/fastlane-sidecar/releases/download/v1.0.0/
 # Install the package
 sudo dpkg -i fastlane-sidecar_1.0.0_amd64.deb
 
-# Follow steps 3-4 above to configure and start the service
+# Follow step 3 above to start the service
 ```
 
 #### Build from Source
@@ -154,7 +128,7 @@ make build-deb
 # Install (replace VERSION with your actual version, e.g., 1.0.0)
 sudo dpkg -i build/fastlane-sidecar_*_amd64.deb
 
-# Follow steps 3-4 above to configure and start the service
+# Follow step 3 above to start the service
 ```
 
 ## Service Management
@@ -199,7 +173,6 @@ fastlane-sidecar \
 
 - `-network` - Network name: testnet, mainnet (default: `testnet`)
 - `-fastlane-contract` - Override fastlane contract address (optional, uses network default if not set)
-- `-home` - Fastlane home directory (default: `/home/monad/fastlane/`)
 - `-log-level` - Log level: debug, info, warn, error (default: `debug`)
 - `-pool-max-duration-ms` - Maximum time to hold transactions in pool (default: `2500`)
 - `-monitoring-port` - HTTP port for monitoring endpoints (/health and /metrics) (default: `8765`)
@@ -224,7 +197,7 @@ The Debian package:
 - Runs with security hardening enabled (restricted privileges)
 - Integrates with systemd for automatic restart on failure
 
-**Note:** The service must run as the `monad` user because it needs access to the Unix sockets in `/home/monad/fastlane/`, which are owned by the `monad` user.
+**Note:** The service must run as the `monad` user because it needs access to the validator's txpool IPC socket at `/home/monad/monad-bft/mempool.sock`, which is owned by the `monad` user.
 
 ## Building from Source
 
@@ -251,11 +224,11 @@ cd fastlane-sidecar
 go build -o fastlane-sidecar ./cmd/sidecar
 
 # Run directly
-./fastlane-sidecar -home=/home/monad/fastlane/ -log-level=info
+./fastlane-sidecar -log-level=info
 
 # Or install to system
 sudo cp fastlane-sidecar /usr/local/bin/
-fastlane-sidecar -home=/home/monad/fastlane/
+fastlane-sidecar
 ```
 
 **Build with Docker:**
@@ -266,9 +239,8 @@ docker build -t fastlane-sidecar .
 # Run the container
 docker run -d \
   --name fastlane-sidecar \
-  -v /home/monad/fastlane:/home/monad/fastlane \
-  fastlane-sidecar \
-  -home=/home/monad/fastlane/
+  -v /home/monad/monad-bft:/home/monad/monad-bft \
+  fastlane-sidecar
 ```
 
 ## Health Endpoint
