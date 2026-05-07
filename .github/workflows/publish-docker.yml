@@ -17,7 +17,7 @@ jobs:
         binary: [sidecar]
 
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
       attestations: write
@@ -111,3 +111,25 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+      - name: Build release manifest (tagged releases only)
+        if: github.ref_type == 'tag'
+        run: |
+          # Strip leading 'v' to match the Docker tag actually pushed
+          # (docker/metadata-action's {{version}} does the same)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          {
+            echo "Image:   ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}:${VERSION}"
+            echo "Digest:  ${{ steps.build.outputs.digest }}"
+            echo "Built:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Commit:  ${{ github.sha }}"
+          } > "fastlane-sidecar-${{ github.ref_name }}.txt"
+
+      - name: Attach release manifest to GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: fastlane-sidecar-${{ github.ref_name }}.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
