@@ -115,8 +115,12 @@ jobs:
       - name: Build release manifest (tagged releases only)
         if: github.ref_type == 'tag'
         run: |
+          # Strip leading 'v' to match the Docker tag actually pushed
+          # (docker/metadata-action's {{version}} does the same)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           {
-            echo "Image:   ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}:${{ github.ref_name }}"
+            echo "Image:   ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SIDECAR }}:${VERSION}"
             echo "Digest:  ${{ steps.build.outputs.digest }}"
             echo "Built:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "Commit:  ${{ github.sha }}"
